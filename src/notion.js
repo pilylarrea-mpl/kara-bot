@@ -196,6 +196,7 @@ function logSummary(page) {
     area: selName(page, "Area"),
     project: plainText(page, "Project"),
     source: plainText(page, "Source"),
+    processing: selName(page, "Processing"),
     goalIds: relationIds(page, "Goal"),
   };
 }
@@ -258,6 +259,31 @@ export async function getLogEntry({ entry_id }) {
 export async function appendToLog({ entry_id, text }) {
   await notion.blocks.children.append({ block_id: entry_id, children: bodyBlocks(text) });
   return { ok: true, id: entry_id };
+}
+
+// Meeting entries the claude.ai routine filed that still need Pilar to confirm
+// their proposed to-dos. status defaults to "Needs review".
+export async function listPendingMeetings({ status = "Needs review" } = {}) {
+  const res = await notion.databases.query({
+    database_id: notionDb.log,
+    filter: {
+      and: [
+        { property: "Type", select: { equals: "Meeting" } },
+        { property: "Processing", select: { equals: status } },
+      ],
+    },
+    sorts: [{ property: "Date", direction: "descending" }],
+    page_size: 25,
+  });
+  return res.results.map(logSummary);
+}
+
+export async function setLogProcessing({ entry_id, status }) {
+  await notion.pages.update({
+    page_id: entry_id,
+    properties: { Processing: status ? { select: { name: status } } : { select: null } },
+  });
+  return { ok: true, id: entry_id, status };
 }
 
 // Reminders whose time has passed, still Pending, not yet followed up.
@@ -439,6 +465,26 @@ export const notionTools = [
       required: ["entry_id", "text"],
     },
   },
+  {
+    name: "list_pending_meetings",
+    description: "List meeting Log entries awaiting Pilar's review of their proposed to-dos. status: 'Needs review' (not yet pinged) or 'Awaiting confirm' (pinged, waiting on her).",
+    input_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["Needs review", "Awaiting confirm"] } },
+    },
+  },
+  {
+    name: "set_log_processing",
+    description: "Set a meeting Log entry's Processing status. Set to 'Filed' once you've created the confirmed to-dos as tasks/reminders. Use 'Awaiting confirm' after you've pinged her.",
+    input_schema: {
+      type: "object",
+      properties: {
+        entry_id: { type: "string" },
+        status: { type: "string", enum: ["Needs review", "Awaiting confirm", "Filed"] },
+      },
+      required: ["entry_id", "status"],
+    },
+  },
 ];
 
 export async function runNotionTool(name, input) {
@@ -455,6 +501,8 @@ export async function runNotionTool(name, input) {
     case "search_logs": return searchLogs(input);
     case "get_log_entry": return getLogEntry(input);
     case "append_to_log": return appendToLog(input);
+    case "list_pending_meetings": return listPendingMeetings(input);
+    case "set_log_processing": return setLogProcessing(input);
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }

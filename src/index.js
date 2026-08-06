@@ -4,7 +4,7 @@ import { config } from "./config.js";
 import { runAgent } from "./agent.js";
 import { loadHistory, saveHistory } from "./store.js";
 import { proactivePrompts } from "./kara.js";
-import { dueReminders, markFollowUpAsked } from "./notion.js";
+import { dueReminders, markFollowUpAsked, listPendingMeetings, setLogProcessing } from "./notion.js";
 import { endedBlocks, markBlockFollowedUp } from "./calendar.js";
 
 const bot = new Bot(config.telegramToken);
@@ -108,6 +108,31 @@ cron.schedule("* * * * *", () =>
       saveHistory(history);
       await send(msg);
       await markBlockFollowedUp(b.id).catch((e) => console.error("markBlock:", e));
+    }
+  })
+);
+
+// ---------- Meeting review (every 15 min) ----------
+// New meeting notes filed by the claude.ai Plaud routine → Kara pings Pilar to
+// confirm the proposed to-dos before filing them as tasks/reminders.
+cron.schedule("*/15 * * * *", () =>
+  enqueue(async () => {
+    let pending = [];
+    try {
+      pending = await listPendingMeetings({ status: "Needs review" });
+    } catch (e) {
+      console.error("meeting review check failed:", e);
+      return;
+    }
+    for (const m of pending) {
+      // Let Kara compose the ping: read the entry, recap it, list proposed to-dos, ask to confirm.
+      await runTurn(
+        `[Meeting review] A new meeting entry "${m.title}" (id ${m.id}, area ${m.area || "unclassified"}) was just filed and needs Pilar's review. Use get_log_entry to read it, then message her: a one-line recap of what the meeting/call was, the concrete to-dos you extracted (numbered), and ask her to confirm which are real before you file them as tasks/reminders. If the area is unclear or wrong, also ask whether it was health, work, personal, etc. Do NOT create tasks yet — wait for her confirmation.`
+      );
+      // Mark as pinged so it isn't re-surfaced next cycle (she'll confirm in chat).
+      await setLogProcessing({ entry_id: m.id, status: "Awaiting confirm" }).catch((e) =>
+        console.error("setLogProcessing:", e)
+      );
     }
   })
 );
