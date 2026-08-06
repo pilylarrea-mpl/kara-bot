@@ -22,10 +22,13 @@ async function send(text) {
 }
 
 // Shared, continuous thread so Kara remembers across chat + proactive slots.
-async function runTurn(userText) {
+// allowSkip: for quiet proactive scans — if Kara outputs the SKIP sentinel
+// (nothing new to report), don't message Pilar and don't persist the exchange.
+async function runTurn(userText, { allowSkip = false } = {}) {
   const history = loadHistory();
   history.push({ role: "user", content: userText });
   const { text, messages } = await runAgent(history);
+  if (allowSkip && /^\s*SKIP\b/i.test(text)) return;
   saveHistory(messages);
   await send(text);
 }
@@ -43,12 +46,13 @@ bot.on("message:text", async (ctx) => {
 });
 
 // ---------- Proactive heartbeat ----------
-function scheduleSlot(expr, key) {
-  cron.schedule(expr, () => enqueue(() => runTurn(`[Scheduled ${key} slot] ${proactivePrompts[key]}`)), {
+function scheduleSlot(expr, key, opts = {}) {
+  cron.schedule(expr, () => enqueue(() => runTurn(`[Scheduled ${key} slot] ${proactivePrompts[key]}`, opts)), {
     timezone: config.tz,
   });
 }
 scheduleSlot("0 7 * * *", "morning");
+scheduleSlot("0 8 * * *", "lookahead", { allowSkip: true }); // daily prep scan — silent when nothing new
 scheduleSlot("0 12 * * *", "midday");
 scheduleSlot("0 15 * * *", "afternoon");
 scheduleSlot("0 21 * * *", "evening");
