@@ -63,7 +63,17 @@ cron.schedule("* * * * *", () =>
       return;
     }
     for (const r of due) {
-      await send(`⏰ ${r.reminder} — did you get to it? (reply: done / not yet / snooze)`);
+      const msg = `⏰ ${r.reminder} — did you get to it? (reply: done / not yet / snooze)`;
+      // Record the ping in the shared conversation so her reply has full context
+      // (which reminder, and its id — so she can update the right one).
+      const history = loadHistory();
+      history.push({
+        role: "user",
+        content: `[system note: your reminder "${r.reminder}" (id ${r.id}) just fired at its scheduled time — you are now pinging Pilar about it]`,
+      });
+      history.push({ role: "assistant", content: msg });
+      saveHistory(history);
+      await send(msg);
       await markFollowUpAsked(r.id).catch((e) => console.error("markFollowUp:", e));
     }
   })
