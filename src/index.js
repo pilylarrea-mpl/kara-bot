@@ -51,6 +51,7 @@ scheduleSlot("0 7 * * *", "morning");
 scheduleSlot("0 12 * * *", "midday");
 scheduleSlot("0 15 * * *", "afternoon");
 scheduleSlot("0 21 * * *", "evening");
+scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
 
 // ---------- Reminder follow-ups (every minute) ----------
 cron.schedule("* * * * *", () =>

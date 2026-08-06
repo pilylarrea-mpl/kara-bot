@@ -9,6 +9,7 @@ const rich = (t) => (t ? [{ text: { content: String(t).slice(0, 1900) } }] : [])
 const sel = (v) => (v ? { select: { name: v } } : undefined);
 const multi = (arr) =>
   arr && arr.length ? { multi_select: arr.map((name) => ({ name })) } : undefined;
+const relation = (id) => (id ? { relation: [{ id }] } : undefined);
 const date = (d) => (d ? { date: { start: d } } : undefined);
 const num = (n) => (n === 0 || n ? { number: Number(n) } : undefined);
 const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
@@ -31,6 +32,10 @@ function tagVals(page, prop) {
   return (page.properties[prop]?.multi_select || []).map((t) => t.name);
 }
 
+function relationIds(page, prop) {
+  return (page.properties[prop]?.relation || []).map((r) => r.id);
+}
+
 function taskSummary(page) {
   return {
     id: page.id,
@@ -41,6 +46,7 @@ function taskSummary(page) {
     due: dateVal(page, "Due"),
     energy: selName(page, "Energy"),
     tags: tagVals(page, "Tags"),
+    goalIds: relationIds(page, "Goal"),
     notes: plainText(page, "Notes"),
   };
 }
@@ -88,6 +94,7 @@ export async function createTask(input) {
     "Est (min)": num(input.est_min),
     Energy: sel(input.energy),
     Tags: multi(input.tags),
+    Goal: relation(input.goal_id),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
   const page = await notion.pages.create({
@@ -105,6 +112,7 @@ export async function updateTask(input) {
     Due: date(input.due),
     Energy: sel(input.energy),
     Tags: multi(input.tags),
+    Goal: relation(input.goal_id),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
   await notion.pages.update({ page_id: input.task_id, properties: props });
@@ -215,7 +223,7 @@ export const notionTools = [
   },
   {
     name: "create_task",
-    description: "Create a new to-do. Goal link is optional; many tasks (errands, wedding, packing) have no goal.",
+    description: "Create a new to-do. Goal link is optional; many tasks (errands, wedding, packing) have no goal. When the task clearly serves one of her Active goals, first call list_goals to get that goal's id, then pass it as goal_id so the to-do ladders up to the goal.",
     input_schema: {
       type: "object",
       properties: {
@@ -227,6 +235,7 @@ export const notionTools = [
         est_min: { type: "number" },
         energy: { type: "string", enum: ["High", "Med", "Low"] },
         tags: { type: "array", items: { type: "string" } },
+        goal_id: { type: "string", description: "Notion page id of the goal this task ladders up to (from list_goals). Optional — omit when no goal fits." },
         notes: { type: "string" },
       },
       required: ["task"],
@@ -234,7 +243,7 @@ export const notionTools = [
   },
   {
     name: "update_task",
-    description: "Update a task by id. To mark done, set status to 'Done'.",
+    description: "Update a task by id. To mark done, set status to 'Done'. Pass goal_id to link it to a goal (from list_goals).",
     input_schema: {
       type: "object",
       properties: {
@@ -245,6 +254,7 @@ export const notionTools = [
         due: { type: "string" },
         energy: { type: "string" },
         tags: { type: "array", items: { type: "string" } },
+        goal_id: { type: "string", description: "Notion page id of the goal to link (from list_goals)." },
         notes: { type: "string" },
       },
       required: ["task_id"],
