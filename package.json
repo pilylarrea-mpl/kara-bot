@@ -1,0 +1,21 @@
+{
+  "name": "kara-bot",
+  "version": "1.0.0",
+  "description": "Kara — Pilar's always-on chief of staff (Telegram + Claude + Notion Command Center)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@notionhq/client": "^2.2.15",
+    "dotenv": "^16.4.5",
+    "googleapis": "^174.0.1",
+    "grammy": "^1.30.0",
+    "node-cron": "^3.0.3"
+  }
+}
