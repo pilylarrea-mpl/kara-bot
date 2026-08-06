@@ -21,5 +21,6 @@ export const notionDb = {
   tasks: "abcbe4e27a7044a1a6601880038b8d36",
   dailyPlan: "a1b6523a90854ae69e7d86c4d4f12260",
   reminders: "37323a123d81448d918b9daa8c455e64",
+  log: "3b4a2f74deaa81668dddda9594f42627", // 📓 shared-brain Log
   hubPage: "3b4a2f74deaa81cc9cf6d3a187d8d336",
 };

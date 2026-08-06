@@ -186,6 +186,80 @@ export async function logDailyPlan(input) {
   return { ok: true, id: page.id };
 }
 
+// ---------- Shared brain: 📓 Log ----------
+function logSummary(page) {
+  return {
+    id: page.id,
+    title: plainTitle(page, "Title"),
+    date: dateVal(page, "Date"),
+    type: selName(page, "Type"),
+    area: selName(page, "Area"),
+    project: plainText(page, "Project"),
+    source: plainText(page, "Source"),
+    goalIds: relationIds(page, "Goal"),
+  };
+}
+
+function bodyBlocks(text) {
+  return String(text || "")
+    .split("\n")
+    .filter((l) => l.trim())
+    .slice(0, 95)
+    .map((line) => ({
+      object: "block",
+      type: "paragraph",
+      paragraph: { rich_text: [{ text: { content: line.slice(0, 1900) } }] },
+    }));
+}
+
+export async function createLogEntry(input) {
+  const props = clean({
+    Title: { title: title(input.title) },
+    Date: date(input.date),
+    Type: sel(input.type),
+    Area: sel(input.area),
+    Project: input.project ? { rich_text: rich(input.project) } : undefined,
+    Source: input.source ? { rich_text: rich(input.source) } : undefined,
+    Goal: relation(input.goal_id),
+  });
+  const page = await notion.pages.create({
+    parent: { database_id: notionDb.log },
+    properties: props,
+    children: bodyBlocks(input.body),
+  });
+  return { ok: true, id: page.id, title: input.title };
+}
+
+export async function searchLogs({ query, type, area, project } = {}) {
+  const filters = [];
+  if (type) filters.push({ property: "Type", select: { equals: type } });
+  if (area) filters.push({ property: "Area", select: { equals: area } });
+  if (project) filters.push({ property: "Project", rich_text: { contains: project } });
+  if (query) filters.push({ property: "Title", title: { contains: query } });
+  const res = await notion.databases.query({
+    database_id: notionDb.log,
+    filter: filters.length ? { and: filters } : undefined,
+    sorts: [{ property: "Date", direction: "descending" }],
+    page_size: 25,
+  });
+  return res.results.map(logSummary);
+}
+
+export async function getLogEntry({ entry_id }) {
+  const page = await notion.pages.retrieve({ page_id: entry_id });
+  const blocks = await notion.blocks.children.list({ block_id: entry_id, page_size: 100 });
+  const body = (blocks.results || [])
+    .map((b) => (b[b.type]?.rich_text || []).map((t) => t.plain_text).join(""))
+    .filter((l) => l !== undefined)
+    .join("\n");
+  return { ...logSummary(page), body };
+}
+
+export async function appendToLog({ entry_id, text }) {
+  await notion.blocks.children.append({ block_id: entry_id, children: bodyBlocks(text) });
+  return { ok: true, id: entry_id };
+}
+
 // Reminders whose time has passed, still Pending, not yet followed up.
 export async function dueReminders() {
   const nowIso = new Date().toISOString();
@@ -311,6 +385,60 @@ export const notionTools = [
       required: ["day", "date"],
     },
   },
+  {
+    name: "create_log_entry",
+    description:
+      "Save a note into the 📓 Log — the shared brain Pilar's other Claude assistants also read/write. Use for meeting notes, next-steps, decisions, ideas, research (e.g. notes on the health-assessment centers she's evaluating), or journal entries. Put the full content in body; classify with type & area; use project to cluster related entries (e.g. 'Health-Assessment', 'Fundraise', 'Spain-trip').",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        type: { type: "string", enum: ["Note", "Meeting", "Idea", "Decision", "Research", "Journal", "Next-steps"] },
+        area: { type: "string", enum: ["Founder", "Health", "Money", "Self", "Relationships", "Learning", "Admin"] },
+        project: { type: "string", description: "Free-text cluster tag to group related entries." },
+        source: { type: "string", description: "Where it came from, e.g. 'Fireflies', a person, or a URL." },
+        goal_id: { type: "string", description: "Optional goal to link (from list_goals)." },
+        date: { type: "string", description: "ISO date YYYY-MM-DD (defaults to today if omitted)." },
+        body: { type: "string", description: "The full note content, one line per paragraph." },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "search_logs",
+    description:
+      "Search the 📓 Log (shared brain). Filter by query (matches title), type, area, and/or project. Returns matching entries newest-first with their ids — use get_log_entry to read the full body of one.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        type: { type: "string" },
+        area: { type: "string" },
+        project: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "get_log_entry",
+    description: "Read the full body of a single Log entry by id (from search_logs).",
+    input_schema: {
+      type: "object",
+      properties: { entry_id: { type: "string" } },
+      required: ["entry_id"],
+    },
+  },
+  {
+    name: "append_to_log",
+    description: "Append text to an existing Log entry's body (for running notes on an ongoing project or meeting).",
+    input_schema: {
+      type: "object",
+      properties: {
+        entry_id: { type: "string" },
+        text: { type: "string", description: "Text to append, one line per paragraph." },
+      },
+      required: ["entry_id", "text"],
+    },
+  },
 ];
 
 export async function runNotionTool(name, input) {
@@ -323,6 +451,10 @@ export async function runNotionTool(name, input) {
     case "create_reminder": return createReminder(input);
     case "update_reminder": return updateReminder(input);
     case "log_daily_plan": return logDailyPlan(input);
+    case "create_log_entry": return createLogEntry(input);
+    case "search_logs": return searchLogs(input);
+    case "get_log_entry": return getLogEntry(input);
+    case "append_to_log": return appendToLog(input);
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
