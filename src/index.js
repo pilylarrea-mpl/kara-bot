@@ -5,6 +5,7 @@ import { runAgent } from "./agent.js";
 import { loadHistory, saveHistory } from "./store.js";
 import { proactivePrompts } from "./kara.js";
 import { dueReminders, markFollowUpAsked } from "./notion.js";
+import { endedBlocks, markBlockFollowedUp } from "./calendar.js";
 
 const bot = new Bot(config.telegramToken);
 
@@ -76,6 +77,33 @@ cron.schedule("* * * * *", () =>
       saveHistory(history);
       await send(msg);
       await markFollowUpAsked(r.id).catch((e) => console.error("markFollowUp:", e));
+    }
+  })
+);
+
+// ---------- Time-block accountability (every minute) ----------
+// When a focus/work block on the calendar ends, ping to check it got done and
+// help her stop and move to the next thing (need #5 + #9).
+cron.schedule("* * * * *", () =>
+  enqueue(async () => {
+    let blocks = [];
+    try {
+      blocks = await endedBlocks();
+    } catch (e) {
+      console.error("block check failed:", e);
+      return;
+    }
+    for (const b of blocks) {
+      const msg = `⏱️ Your "${b.title}" block just wrapped — did you finish it? (done / need more time / didn't get to it)`;
+      const history = loadHistory();
+      history.push({
+        role: "user",
+        content: `[system note: the calendar focus block "${b.title}"${b.taskId ? ` (task id ${b.taskId})` : ""} just ended at its scheduled time — you are pinging Pilar to check if she finished, mark the task done if she confirms, and help her transition to the next block. If she's not done, briefly offer to extend it or move it, then nudge her onward.]`,
+      });
+      history.push({ role: "assistant", content: msg });
+      saveHistory(history);
+      await send(msg);
+      await markBlockFollowedUp(b.id).catch((e) => console.error("markBlock:", e));
     }
   })
 );
