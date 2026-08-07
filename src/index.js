@@ -6,6 +6,7 @@ import { loadHistory, saveHistory } from "./store.js";
 import { proactivePrompts } from "./kara.js";
 import { dueReminders, markFollowUpAsked, listPendingMeetings, setLogProcessing } from "./notion.js";
 import { endedBlocks, markBlockFollowedUp } from "./calendar.js";
+import { transcribeAudio, transcribeEnabled } from "./transcribe.js";
 
 const bot = new Bot(config.telegramToken);
 
@@ -44,6 +45,37 @@ bot.on("message:text", async (ctx) => {
   await bot.api.sendChatAction(config.chatId, "typing").catch(() => {});
   enqueue(() => runTurn(text));
 });
+
+// ---------- Telegram: voice notes → transcribe → treat like a text message ----------
+// Pilar can talk at Kara (great for ADHD brain-dumps). We download the audio,
+// transcribe it, and feed the text through the same agent turn as a typed message.
+async function handleVoice(ctx) {
+  if (String(ctx.chat.id) !== config.chatId) return;
+  if (!transcribeEnabled) {
+    await send("I can't hear voice notes yet — text me and I'll get right on it.");
+    return;
+  }
+  await bot.api.sendChatAction(config.chatId, "typing").catch(() => {});
+  try {
+    const file = await ctx.getFile(); // works for voice, audio, and video notes
+    const url = `https://api.telegram.org/file/bot${config.telegramToken}/${file.file_path}`;
+    const resp = await fetch(url);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const { text, ok } = await transcribeAudio(buf, "voice.ogg");
+    if (!ok || !text) {
+      await send("Couldn't quite make that out — mind sending it again or typing it?");
+      return;
+    }
+    // Mark it as spoken so Kara reflects it back and parses rambling dumps well.
+    enqueue(() => runTurn(`[Voice note transcript] ${text}`));
+  } catch (e) {
+    console.error("voice handling failed:", e);
+    await send("Had trouble with that voice note — try again in a sec, or type it.");
+  }
+}
+bot.on("message:voice", handleVoice);
+bot.on("message:audio", handleVoice);
+bot.on("message:video_note", handleVoice);
 
 // ---------- Proactive heartbeat ----------
 function scheduleSlot(expr, key, opts = {}) {
