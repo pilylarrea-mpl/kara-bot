@@ -7,7 +7,13 @@ import { gmailTools, runGmailTool } from "./gmail.js";
 
 const client = new Anthropic({ apiKey: config.anthropicKey });
 
-const allTools = [...notionTools, ...calendarTools, ...gmailTools];
+// Anthropic-hosted server tool: web search. Executed on Anthropic's side — no
+// key or client handler needed. Lets Kara research live info (prices, flights,
+// vendors, facts) over Telegram. She still never books/buys — that's a handoff.
+const serverTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }];
+
+const clientTools = [...notionTools, ...calendarTools, ...gmailTools];
+const allTools = [...clientTools, ...serverTools];
 const calNames = new Set(calendarTools.map((t) => t.name));
 const gmailNames = new Set(gmailTools.map((t) => t.name));
 
