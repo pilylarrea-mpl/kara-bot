@@ -7,10 +7,15 @@ import { gmailTools, runGmailTool } from "./gmail.js";
 
 const client = new Anthropic({ apiKey: config.anthropicKey });
 
-// Anthropic-hosted server tool: web search. Executed on Anthropic's side — no
-// key or client handler needed. Lets Kara research live info (prices, flights,
-// vendors, facts) over Telegram. She still never books/buys — that's a handoff.
-const serverTools = [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }];
+// Anthropic-hosted server tools, executed on Anthropic's side — no key or client
+// handler needed. web_search: research live info (prices, flights, vendors,
+// facts). web_fetch: read the actual content of a URL Pilar pastes (article,
+// newsletter, listing) and summarize it. She still never books/buys — a handoff.
+const WEB_FETCH_BETA = "web-fetch-2025-09-10";
+const serverTools = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 5 },
+  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 5, max_content_tokens: 50000 },
+];
 
 const clientTools = [...notionTools, ...calendarTools, ...gmailTools];
 const allTools = [...clientTools, ...serverTools];
@@ -50,12 +55,13 @@ export async function runAgent(messages) {
   const convo = sanitizeHistory([...messages]);
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await client.messages.create({
+    const res = await client.beta.messages.create({
       model: config.model,
       max_tokens: 4096,
       system: systemPrompt(),
       tools: allTools,
       messages: convo,
+      betas: [WEB_FETCH_BETA],
     });
 
     convo.push({ role: "assistant", content: res.content });
