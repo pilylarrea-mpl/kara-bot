@@ -43,3 +43,4 @@ Text @Karaeabot "what's on my plate" — she should answer from Notion.
 - Web/news tool (AI + finance brief), Google Calendar blocks, email triage, meeting recaps.
 
 # auto-deploy verified 2026-08-07
+15:56:52 auto-deploy live
