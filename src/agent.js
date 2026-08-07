@@ -3,11 +3,13 @@ import { config } from "./config.js";
 import { systemPrompt } from "./kara.js";
 import { notionTools, runNotionTool } from "./notion.js";
 import { calendarTools, runCalendarTool } from "./calendar.js";
+import { gmailTools, runGmailTool } from "./gmail.js";
 
 const client = new Anthropic({ apiKey: config.anthropicKey });
 
-const allTools = [...notionTools, ...calendarTools];
+const allTools = [...notionTools, ...calendarTools, ...gmailTools];
 const calNames = new Set(calendarTools.map((t) => t.name));
+const gmailNames = new Set(gmailTools.map((t) => t.name));
 
 const MAX_STEPS = 8;
 
@@ -68,6 +70,8 @@ export async function runAgent(messages) {
         const input = block.input || {};
         const out = calNames.has(block.name)
           ? await runCalendarTool(block.name, input)
+          : gmailNames.has(block.name)
+          ? await runGmailTool(block.name, input)
           : await runNotionTool(block.name, input);
         toolResults.push({
           type: "tool_result",
