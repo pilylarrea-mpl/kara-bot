@@ -12,13 +12,34 @@ const calNames = new Set(calendarTools.map((t) => t.name));
 const MAX_STEPS = 8;
 
 /**
+ * Heal a possibly-corrupted history before sending it to the API.
+ * When old turns get trimmed off the front, a `tool_result` can be left with
+ * no matching `tool_use` before it — which the API rejects with a 400. Drop any
+ * leading assistant turns or orphaned tool_result turns so the conversation
+ * always starts on a clean user message.
+ */
+function sanitizeHistory(msgs) {
+  while (msgs.length) {
+    const m = msgs[0];
+    const hasToolResult =
+      Array.isArray(m.content) && m.content.some((b) => b && b.type === "tool_result");
+    if (m.role === "assistant" || (m.role === "user" && hasToolResult)) {
+      msgs.shift();
+    } else {
+      break;
+    }
+  }
+  return msgs;
+}
+
+/**
  * Run Kara over a message history. Executes Notion tool calls in a loop until
  * she produces a final text answer.
  * @param {Array} messages  Anthropic message array (mutated copy returned).
  * @returns {{ text: string, messages: Array }}
  */
 export async function runAgent(messages) {
-  const convo = [...messages];
+  const convo = sanitizeHistory([...messages]);
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await client.messages.create({
