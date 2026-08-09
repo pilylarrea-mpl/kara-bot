@@ -4,6 +4,7 @@ import { systemPrompt } from "./kara.js";
 import { notionTools, runNotionTool } from "./notion.js";
 import { calendarTools, runCalendarTool } from "./calendar.js";
 import { gmailTools, runGmailTool } from "./gmail.js";
+import { memoryTools, runMemoryTool, factsBlock } from "./memory.js";
 
 const client = new Anthropic({ apiKey: config.anthropicKey });
 
@@ -17,10 +18,11 @@ const serverTools = [
   { type: "web_fetch_20250910", name: "web_fetch", max_uses: 5, max_content_tokens: 50000 },
 ];
 
-const clientTools = [...notionTools, ...calendarTools, ...gmailTools];
+const clientTools = [...notionTools, ...calendarTools, ...gmailTools, ...memoryTools];
 const allTools = [...clientTools, ...serverTools];
 const calNames = new Set(calendarTools.map((t) => t.name));
 const gmailNames = new Set(gmailTools.map((t) => t.name));
+const memoryNames = new Set(memoryTools.map((t) => t.name));
 
 const MAX_STEPS = 8;
 
@@ -58,7 +60,7 @@ export async function runAgent(messages) {
     const res = await client.beta.messages.create({
       model: config.model,
       max_tokens: 4096,
-      system: systemPrompt(),
+      system: systemPrompt(factsBlock()),
       tools: allTools,
       messages: convo,
       betas: [WEB_FETCH_BETA],
@@ -84,6 +86,8 @@ export async function runAgent(messages) {
           ? await runCalendarTool(block.name, input)
           : gmailNames.has(block.name)
           ? await runGmailTool(block.name, input)
+          : memoryNames.has(block.name)
+          ? await runMemoryTool(block.name, input)
           : await runNotionTool(block.name, input);
         toolResults.push({
           type: "tool_result",

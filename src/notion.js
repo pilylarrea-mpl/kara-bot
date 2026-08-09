@@ -286,7 +286,10 @@ export async function setLogProcessing({ entry_id, status }) {
   return { ok: true, id: entry_id, status };
 }
 
-// Reminders whose time has passed, still Pending, not yet followed up.
+// Reminders whose time has passed and are STILL Pending. We return them every
+// time (no one-shot "Follow-up asked" gate) — the caller decides how often to
+// re-ping using per-reminder ping timestamps, so Kara keeps nudging until Pilar
+// marks the reminder Done (which flips it off Pending and out of this list).
 export async function dueReminders() {
   const nowIso = new Date().toISOString();
   const res = await notion.databases.query({
@@ -294,7 +297,6 @@ export async function dueReminders() {
     filter: {
       and: [
         { property: "Status", select: { equals: "Pending" } },
-        { property: "Follow-up asked", checkbox: { equals: false } },
         { property: "Time", date: { on_or_before: nowIso } },
       ],
     },

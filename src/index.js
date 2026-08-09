@@ -4,9 +4,10 @@ import { config } from "./config.js";
 import { runAgent } from "./agent.js";
 import { loadHistory, saveHistory } from "./store.js";
 import { proactivePrompts } from "./kara.js";
-import { dueReminders, markFollowUpAsked, listPendingMeetings, setLogProcessing } from "./notion.js";
+import { dueReminders, listPendingMeetings, setLogProcessing } from "./notion.js";
 import { endedBlocks, markBlockFollowedUp } from "./calendar.js";
 import { transcribeAudio, transcribeEnabled } from "./transcribe.js";
+import { shouldPingReminder, markReminderPinged } from "./memory.js";
 
 const bot = new Bot(config.telegramToken);
 
@@ -91,8 +92,19 @@ scheduleSlot("0 21 * * *", "evening");
 scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
 
 // ---------- Reminder follow-ups (every minute) ----------
+// Kara re-pings each due reminder on an interval until Pilar marks it Done — she
+// never drops one after a single ask. Quiet hours (10pm–7am ET) are skipped so
+// she isn't buzzed overnight; a still-open reminder resumes in the morning.
+const REPING_MS = 60 * 60 * 1000; // re-ask at most once an hour
+function wakingHourET() {
+  const h = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: config.tz, hour: "2-digit", hour12: false }).format(new Date())
+  );
+  return h >= 7 && h < 22;
+}
 cron.schedule("* * * * *", () =>
   enqueue(async () => {
+    if (!wakingHourET()) return;
     let due = [];
     try {
       due = await dueReminders();
@@ -101,18 +113,20 @@ cron.schedule("* * * * *", () =>
       return;
     }
     for (const r of due) {
-      const msg = `⏰ ${r.reminder} — did you get to it? (reply: done / not yet / snooze)`;
+      if (!shouldPingReminder(r.id, REPING_MS)) continue; // not time to re-ask yet
+      const msg = `⏰ ${r.reminder} — did you get to it yet? (reply: done / not yet / snooze)`;
       // Record the ping in the shared conversation so her reply has full context
-      // (which reminder, and its id — so she can update the right one).
+      // (which reminder, and its id — so she can update the right one). Note to
+      // Kara: keep this open until Pilar confirms done, then mark it Done.
       const history = loadHistory();
       history.push({
         role: "user",
-        content: `[system note: your reminder "${r.reminder}" (id ${r.id}) just fired at its scheduled time — you are now pinging Pilar about it]`,
+        content: `[system note: your reminder "${r.reminder}" (id ${r.id}) is still Pending and past due — you are pinging Pilar about it again. Keep following up on each cycle until she confirms she did it, then update_reminder status Done to stop the loop. If she wants it later, reschedule its Time or snooze.]`,
       });
       history.push({ role: "assistant", content: msg });
       saveHistory(history);
       await send(msg);
-      await markFollowUpAsked(r.id).catch((e) => console.error("markFollowUp:", e));
+      markReminderPinged(r.id);
     }
   })
 );
