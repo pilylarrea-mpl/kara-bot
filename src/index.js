@@ -112,22 +112,18 @@ cron.schedule("* * * * *", () =>
       console.error("reminder check failed:", e);
       return;
     }
-    for (const r of due) {
-      if (!shouldPingReminder(r.id, REPING_MS)) continue; // not time to re-ask yet
-      const msg = `⏰ ${r.reminder} — did you get to it yet? (reply: done / not yet / snooze)`;
-      // Record the ping in the shared conversation so her reply has full context
-      // (which reminder, and its id — so she can update the right one). Note to
-      // Kara: keep this open until Pilar confirms done, then mark it Done.
-      const history = loadHistory();
-      history.push({
-        role: "user",
-        content: `[system note: your reminder "${r.reminder}" (id ${r.id}) is still Pending and past due — you are pinging Pilar about it again. Keep following up on each cycle until she confirms she did it, then update_reminder status Done to stop the loop. If she wants it later, reschedule its Time or snooze.]`,
-      });
-      history.push({ role: "assistant", content: msg });
-      saveHistory(history);
-      await send(msg);
-      markReminderPinged(r.id);
-    }
+    // Only the ones it's actually time to (re-)ask about, and batch them into a
+    // SINGLE conversational turn so Kara follows up in her own voice — checking
+    // what she already knows, marking off what's done — instead of firing a
+    // robotic "reply done/not yet/snooze" template per reminder.
+    const toAsk = due.filter((r) => shouldPingReminder(r.id, REPING_MS));
+    if (!toAsk.length) return;
+    const list = toAsk.map((r, i) => `${i + 1}. "${r.reminder}" (id ${r.id}, was due ${r.time})`).join("\n");
+    await runTurn(
+      `[Reminder follow-up — compose in YOUR OWN voice, this is not a template] These reminders are past due and still marked Pending in Notion:\n${list}\n\n` +
+        `Before you message her: check your durable memory AND the recent conversation. If she already told you any of these are done (or clearly did them), call update_reminder to mark those Done and do NOT ask about them again. For anything genuinely still open, follow up in ONE short, warm, human message — group them naturally, no numbered checklist, no "reply done/not yet/snooze" boilerplate, don't sound like a cron job. If several are stale morning-routine items, acknowledge that lightly rather than interrogating each. If nothing is actually still open, mark them done and send nothing more than a light note (or stay quiet). Keep it to a few lines.`
+    );
+    for (const r of toAsk) markReminderPinged(r.id);
   })
 );
 
@@ -144,15 +140,11 @@ cron.schedule("* * * * *", () =>
       return;
     }
     for (const b of blocks) {
-      const msg = `⏱️ Your "${b.title}" block just wrapped — did you finish it? (done / need more time / didn't get to it)`;
-      const history = loadHistory();
-      history.push({
-        role: "user",
-        content: `[system note: the calendar focus block "${b.title}"${b.taskId ? ` (task id ${b.taskId})` : ""} just ended at its scheduled time — you are pinging Pilar to check if she finished, mark the task done if she confirms, and help her transition to the next block. If she's not done, briefly offer to extend it or move it, then nudge her onward.]`,
-      });
-      history.push({ role: "assistant", content: msg });
-      saveHistory(history);
-      await send(msg);
+      // Route through Kara's brain so the check-in is in her own voice, not a
+      // canned template.
+      await runTurn(
+        `[Focus block ended — compose in YOUR OWN voice] Pilar's calendar block "${b.title}"${b.taskId ? ` (task id ${b.taskId})` : ""} just ended at its scheduled time. Check in warmly and briefly: did she finish? If she confirms done and it's linked to a task, mark that task Done. If not done, offer to extend or move it, then help her stop and transition to the next thing. A couple of lines, human — no boilerplate.`
+      );
       await markBlockFollowedUp(b.id).catch((e) => console.error("markBlock:", e));
     }
   })
