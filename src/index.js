@@ -23,12 +23,28 @@ async function send(text) {
   for (const c of chunks) await bot.api.sendMessage(config.chatId, c);
 }
 
+// Human-readable current time in Pilar's timezone, stamped on every incoming
+// message so Kara always knows the real "now" and how much time passed between
+// messages — she can't mistake this morning's message for last night's.
+function nowStamp() {
+  return (
+    new Date().toLocaleString("en-US", {
+      timeZone: config.tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }) + " ET"
+  );
+}
+
 // Shared, continuous thread so Kara remembers across chat + proactive slots.
 // allowSkip: for quiet proactive scans — if Kara outputs the SKIP sentinel
 // (nothing new to report), don't message Pilar and don't persist the exchange.
 async function runTurn(userText, { allowSkip = false } = {}) {
   const history = loadHistory();
-  history.push({ role: "user", content: userText });
+  history.push({ role: "user", content: `[${nowStamp()}] ${userText}` });
   const { text, messages } = await runAgent(history);
   if (allowSkip && /^\s*SKIP\b/i.test(text)) return;
   saveHistory(messages);
