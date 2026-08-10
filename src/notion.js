@@ -3,6 +3,31 @@ import { config, notionDb } from "./config.js";
 
 const notion = new Client({ auth: config.notionToken });
 
+// Turn a plain local wall-clock datetime ("YYYY-MM-DDTHH:MM[:SS]", no offset) in
+// Pilar's timezone into the correct absolute UTC ISO, so reminders fire at the
+// right moment (the follow-up loop compares against UTC now). DST-safe via a
+// two-pass offset solve. If the input already has an offset/Z or is date-only,
+// it's returned unchanged.
+function localToUtcIso(value) {
+  if (!value) return value;
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return value; // has offset/Z, or is a date-only string — leave as-is
+  const y = +m[1], mo = +m[2], d = +m[3], h = +m[4], mi = +m[5], s = +(m[6] || 0);
+  let ts = Date.UTC(y, mo - 1, d, h, mi, s);
+  for (let i = 0; i < 2; i++) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: config.tz,
+      hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(new Date(ts));
+    const gv = (t) => +parts.find((p) => p.type === t).value;
+    const etAsUtc = Date.UTC(gv("year"), gv("month") - 1, gv("day"), gv("hour") % 24, gv("minute"), gv("second"));
+    ts += Date.UTC(y, mo - 1, d, h, mi, s) - etAsUtc;
+  }
+  return new Date(ts).toISOString();
+}
+
 // ---------- helpers ----------
 const title = (t) => (t ? [{ text: { content: String(t).slice(0, 1900) } }] : []);
 const rich = (t) => (t ? [{ text: { content: String(t).slice(0, 1900) } }] : []);
@@ -141,7 +166,7 @@ export async function listReminders({ status } = {}) {
 export async function createReminder(input) {
   const props = clean({
     Reminder: { title: title(input.reminder) },
-    Time: date(input.time),
+    Time: date(localToUtcIso(input.time)),
     Status: sel("Pending"),
     Repeat: sel(input.repeat || "One-time"),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
@@ -156,7 +181,7 @@ export async function createReminder(input) {
 export async function updateReminder(input) {
   const props = clean({
     Status: sel(input.status),
-    Time: date(input.time),
+    Time: date(localToUtcIso(input.time)),
   });
   await notion.pages.update({ page_id: input.reminder_id, properties: props });
   return { ok: true, id: input.reminder_id };
@@ -379,7 +404,7 @@ export const notionTools = [
       type: "object",
       properties: {
         reminder: { type: "string" },
-        time: { type: "string", description: "ISO datetime with offset, e.g. 2026-08-06T14:00:00-04:00" },
+        time: { type: "string", description: "PLAIN local wall-clock time, NO offset and NO Z, e.g. 2026-08-14T14:00:00 for 2pm ET. Use resolve_date / the date table for the date — don't compute it." },
         repeat: { type: "string", enum: ["One-time", "Daily", "Weekdays", "Weekly"] },
         notes: { type: "string" },
       },

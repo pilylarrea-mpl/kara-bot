@@ -27,9 +27,25 @@ export let calendarEnabled = false;
 
 const NOT_READY = { ok: false, note: "Google Calendar not configured yet." };
 
+// Add minutes to a naive wall-clock string ("YYYY-MM-DDTHH:MM:SS", no offset)
+// staying in wall-clock terms, so a naive start yields a naive end (both get
+// interpreted in TZ by Google — no offset math, no day/hour drift).
+function addMinutesNaive(naive, mins) {
+  const m = String(naive).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return naive;
+  const dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)));
+  dt.setUTCMinutes(dt.getUTCMinutes() + mins);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}T${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:${p(dt.getUTCSeconds())}`;
+}
+
 export async function createEvent({ title, start, end, description, is_block, task_id }) {
   if (!calendarEnabled) return NOT_READY;
-  const endDt = end || new Date(new Date(start).getTime() + 30 * 60000).toISOString();
+  // Compute a default end that matches start's form: absolute if start carries a
+  // tz offset/Z, naive wall-clock otherwise.
+  const startHasTz = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(String(start));
+  const endDt =
+    end || (startHasTz ? new Date(new Date(start).getTime() + 30 * 60000).toISOString() : addMinutesNaive(start, 30));
   const requestBody = {
     summary: title,
     description: description || "",
@@ -123,7 +139,84 @@ export async function deleteEvent({ event_id }) {
   return { ok: true, deleted: event_id };
 }
 
+// Deterministic date resolver so Kara never does date math in her head (the
+// source of off-by-one scheduling). Returns the exact ISO date + weekday for a
+// given date, an offset in days, or the next/this occurrence of a weekday — all
+// computed in Pilar's timezone.
+function etTodayParts() {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  return {
+    y: +p.find((x) => x.type === "year").value,
+    m: +p.find((x) => x.type === "month").value,
+    d: +p.find((x) => x.type === "day").value,
+  };
+}
+function fmtYmd(y, m, d) {
+  // Noon UTC avoids any DST/tz edge when we only care about the calendar date.
+  const dt = new Date(Date.UTC(y, m - 1, d, 12));
+  return {
+    iso_date: `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(
+      dt.getUTCDate()
+    ).padStart(2, "0")}`,
+    weekday: dt.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
+    pretty: dt.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    }),
+  };
+}
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+export function resolveDate({ date, in_days, weekday, occurrence = "next" } = {}) {
+  const t = etTodayParts();
+  if (date) {
+    const [y, m, d] = date.split("-").map(Number);
+    return { ...fmtYmd(y, m, d), input: date };
+  }
+  if (typeof in_days === "number") {
+    const base = new Date(Date.UTC(t.y, t.m - 1, t.d + in_days, 12));
+    return { ...fmtYmd(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate()), in_days };
+  }
+  if (weekday) {
+    const target = WEEKDAYS.indexOf(String(weekday).toLowerCase());
+    if (target < 0) return { error: `Unknown weekday: ${weekday}` };
+    const today = new Date(Date.UTC(t.y, t.m - 1, t.d, 12));
+    const todayDow = today.getUTCDay();
+    let delta = (target - todayDow + 7) % 7;
+    if (delta === 0 && occurrence === "next") delta = 7; // "next Friday" when today is Friday → 7 days out
+    const base = new Date(Date.UTC(t.y, t.m - 1, t.d + delta, 12));
+    return {
+      ...fmtYmd(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate()),
+      weekday_requested: weekday,
+      occurrence,
+    };
+  }
+  // default: today
+  return { ...fmtYmd(t.y, t.m, t.d), note: "today" };
+}
+
 export const calendarTools = [
+  {
+    name: "resolve_date",
+    description:
+      "Get the EXACT calendar date + weekday without doing date math yourself (you get this wrong). Use before scheduling anything whose date isn't already an obvious YYYY-MM-DD. Pass ONE of: date (YYYY-MM-DD, to confirm its weekday), in_days (0=today, 1=tomorrow, 7=a week out), or weekday+occurrence ('this'/'next'). Returns iso_date, weekday, and a pretty label. Always use the returned iso_date when creating the event/task/reminder.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD to look up the weekday for." },
+        in_days: { type: "number", description: "Days from today (0=today, 1=tomorrow)." },
+        weekday: { type: "string", description: "e.g. 'Thursday'." },
+        occurrence: { type: "string", enum: ["this", "next"], description: "For weekday: this week's or next." },
+      },
+    },
+  },
   {
     name: "create_calendar_event",
     description:
@@ -132,8 +225,8 @@ export const calendarTools = [
       type: "object",
       properties: {
         title: { type: "string" },
-        start: { type: "string", description: "ISO datetime with offset, e.g. 2026-08-06T16:00:00-04:00" },
-        end: { type: "string", description: "ISO datetime with offset; optional, defaults to 30 min after start" },
+        start: { type: "string", description: "PLAIN local wall-clock time, NO offset and NO Z, e.g. 2026-08-14T15:00:00 for 3pm ET. Get the date from resolve_date / the date table — don't compute it." },
+        end: { type: "string", description: "Plain local wall-clock time, no offset; optional, defaults to 30 min after start." },
         description: { type: "string" },
         is_block: { type: "boolean", description: "True for a focus/work/task time block you scheduled — enables an end-of-block accountability check-in. False/omit for external meetings & appointments." },
         task_id: { type: "string", description: "Notion task id this block is for (optional). Lets Kara mark the task done when the block ends." },
@@ -163,8 +256,8 @@ export const calendarTools = [
       properties: {
         event_id: { type: "string" },
         title: { type: "string" },
-        start: { type: "string", description: "New ISO datetime with offset" },
-        end: { type: "string", description: "New ISO datetime with offset" },
+        start: { type: "string", description: "New plain local wall-clock time, no offset (e.g. 2026-08-14T15:00:00)." },
+        end: { type: "string", description: "New plain local wall-clock time, no offset." },
       },
       required: ["event_id"],
     },
@@ -185,6 +278,7 @@ export const calendarTools = [
 
 export async function runCalendarTool(name, input) {
   switch (name) {
+    case "resolve_date": return resolveDate(input);
     case "create_calendar_event": return createEvent(input);
     case "list_calendar_events": return listEvents(input);
     case "update_calendar_event": return updateEvent(input);
