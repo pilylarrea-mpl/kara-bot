@@ -35,7 +35,7 @@ function localToUtcIso(value) {
 // truth for the current sprint. Both are injected into Kara's system prompt.
 const ABOUT_PAGE = "3b7a2f74deaa8177a2f5d2815f3bc53e";
 const SPRINT_PAGE = "3b8a2f74deaa8141a499ea9e4cae8c6e";
-const PAGE_TTL = 5 * 60 * 1000;
+const PAGE_TTL = 60 * 1000; // ~1 min so project edits show up near-real-time
 const _pageCache = {};
 
 async function readPageText(pageId) {
