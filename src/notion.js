@@ -29,6 +29,76 @@ function localToUtcIso(value) {
   return new Date(ts).toISOString();
 }
 
+// ---------- shared memory + live sprint (read from Notion, cached ~5 min) ----------
+// The 🧠 About Pilar page is the ONE shared memory that Kara + the claude.ai
+// projects all read/write. The 🏃 Current Sprint page is the live source of
+// truth for the current sprint. Both are injected into Kara's system prompt.
+const ABOUT_PAGE = "3b7a2f74deaa8177a2f5d2815f3bc53e";
+const SPRINT_PAGE = "3b8a2f74deaa8141a499ea9e4cae8c6e";
+const PAGE_TTL = 5 * 60 * 1000;
+const _pageCache = {};
+
+async function readPageText(pageId) {
+  const c = _pageCache[pageId];
+  if (c && Date.now() - c.at < PAGE_TTL) return c.text;
+  try {
+    let text = "";
+    let cursor;
+    do {
+      const res = await notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 });
+      for (const b of res.results) {
+        const rt = (b[b.type]?.rich_text || []).map((t) => t.plain_text).join("");
+        if (rt) text += rt + "\n";
+      }
+      cursor = res.has_more ? res.next_cursor : undefined;
+    } while (cursor);
+    _pageCache[pageId] = { text: text.trim(), at: Date.now() };
+    return _pageCache[pageId].text;
+  } catch (e) {
+    console.error("readPageText failed", pageId, e.message);
+    return c ? c.text : "";
+  }
+}
+export const getAboutPilar = () => readPageText(ABOUT_PAGE);
+export const getCurrentSprint = () => readPageText(SPRINT_PAGE);
+const invalidate = (id) => { if (_pageCache[id]) _pageCache[id].at = 0; };
+
+// remember/forget/list are backed by the About Pilar page so memory is shared.
+export async function appendSharedFact({ text }) {
+  if (!text || !text.trim()) return { ok: false, note: "empty" };
+  await notion.blocks.children.append({
+    block_id: ABOUT_PAGE,
+    children: [{ object: "block", type: "bulleted_list_item", bulleted_list_item: { rich_text: rich(text) } }],
+  });
+  invalidate(ABOUT_PAGE);
+  return { ok: true };
+}
+export async function removeSharedFact({ id, contains }) {
+  let cursor;
+  let removed = 0;
+  do {
+    const res = await notion.blocks.children.list({ block_id: ABOUT_PAGE, start_cursor: cursor, page_size: 100 });
+    for (const b of res.results) {
+      if (b.type !== "bulleted_list_item") continue; // never touch headings/structure
+      const t = (b.bulleted_list_item?.rich_text || []).map((x) => x.plain_text).join("");
+      if (/^\s*\(Kara /.test(t)) continue; // keep the placeholder bullets
+      if ((id && b.id === id) || (contains && t.toLowerCase().includes(contains.toLowerCase()))) {
+        await notion.blocks.delete({ block_id: b.id });
+        removed++;
+      }
+    }
+    cursor = res.has_more ? res.next_cursor : undefined;
+  } while (cursor);
+  invalidate(ABOUT_PAGE);
+  return { ok: true, removed };
+}
+export async function listSharedFacts() {
+  const res = await notion.blocks.children.list({ block_id: ABOUT_PAGE, page_size: 100 });
+  return (res.results || [])
+    .filter((b) => b.type === "bulleted_list_item")
+    .map((b) => ({ id: b.id, text: (b.bulleted_list_item?.rich_text || []).map((x) => x.plain_text).join("") }));
+}
+
 // ---------- helpers ----------
 const title = (t) => (t ? [{ text: { content: String(t).slice(0, 1900) } }] : []);
 const rich = (t) => (t ? [{ text: { content: String(t).slice(0, 1900) } }] : []);
@@ -203,7 +273,17 @@ export async function createReminder(input) {
     parent: { database_id: notionDb.reminders },
     properties: props,
   });
-  return { ok: true, id: page.id, reminder: input.reminder };
+  // A reminder also gets a matching calendar event at its time (~30 min).
+  let calendar_event_id = null;
+  if (input.time) {
+    try {
+      const ev = await createEvent({ title: `⏰ ${input.reminder}`, start: input.time, task_id: page.id });
+      if (ev && ev.ok) calendar_event_id = ev.id;
+    } catch (e) {
+      console.error("reminder→calendar failed:", e.message);
+    }
+  }
+  return { ok: true, id: page.id, reminder: input.reminder, calendar_event_id };
 }
 
 export async function updateReminder(input) {

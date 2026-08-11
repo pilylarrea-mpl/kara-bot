@@ -1,10 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { systemPrompt } from "./kara.js";
-import { notionTools, runNotionTool } from "./notion.js";
+import { notionTools, runNotionTool, getAboutPilar, getCurrentSprint } from "./notion.js";
 import { calendarTools, runCalendarTool } from "./calendar.js";
 import { gmailTools, runGmailTool } from "./gmail.js";
-import { memoryTools, runMemoryTool, factsBlock } from "./memory.js";
+import { memoryTools, runMemoryTool } from "./memory.js";
 
 const client = new Anthropic({ apiKey: config.anthropicKey });
 
@@ -56,11 +56,15 @@ function sanitizeHistory(msgs) {
 export async function runAgent(messages) {
   const convo = sanitizeHistory([...messages]);
 
+  // Pull shared memory (About Pilar page) + the live current sprint once per run
+  // — both are cached ~5 min in notion.js so this is cheap.
+  const [about, sprint] = await Promise.all([getAboutPilar(), getCurrentSprint()]);
+
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await client.beta.messages.create({
       model: config.model,
       max_tokens: 4096,
-      system: systemPrompt(factsBlock()),
+      system: systemPrompt({ about, sprint }),
       tools: allTools,
       messages: convo,
       betas: [WEB_FETCH_BETA],
