@@ -39,25 +39,39 @@ function addMinutesNaive(naive, mins) {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}T${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:${p(dt.getUTCSeconds())}`;
 }
 
+function nextDayYmd(ymd) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + 1, 12));
+  const p = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+}
+
 export async function createEvent({ title, start, end, description, is_block, task_id }) {
   if (!calendarEnabled) return NOT_READY;
-  // Compute a default end that matches start's form: absolute if start carries a
-  // tz offset/Z, naive wall-clock otherwise.
-  const startHasTz = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(String(start));
-  const endDt =
-    end || (startHasTz ? new Date(new Date(start).getTime() + 30 * 60000).toISOString() : addMinutesNaive(start, 30));
-  const requestBody = {
-    summary: title,
-    description: description || "",
-    start: { dateTime: start, timeZone: TZ },
-    end: { dateTime: endDt, timeZone: TZ },
-  };
-  // Tag focus/work blocks so the accountability loop can follow up when they end.
-  if (is_block) {
-    requestBody.extendedProperties = {
-      private: { karaBlock: "1", followUpAsked: "0", ...(task_id ? { taskId: String(task_id) } : {}) },
-    };
+  const requestBody = { summary: title, description: description || "" };
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(String(start));
+  if (dateOnly) {
+    // All-day event — used for a dated to-do that has no specific time.
+    requestBody.start = { date: start };
+    requestBody.end = { date: end && /^\d{4}-\d{2}-\d{2}$/.test(end) ? nextDayYmd(end) : nextDayYmd(start) };
+  } else {
+    // Timed event. Default end matches start's form (absolute if it carries a
+    // tz offset/Z, naive wall-clock otherwise) so nothing drifts a day/hour.
+    const startHasTz = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(String(start));
+    const endDt =
+      end || (startHasTz ? new Date(new Date(start).getTime() + 30 * 60000).toISOString() : addMinutesNaive(start, 30));
+    requestBody.start = { dateTime: start, timeZone: TZ };
+    requestBody.end = { dateTime: endDt, timeZone: TZ };
   }
+  // Tag focus/work blocks (timed) so the accountability loop follows up when they
+  // end; always record the linked task id so completing the task can find it.
+  const priv = {};
+  if (is_block && !dateOnly) {
+    priv.karaBlock = "1";
+    priv.followUpAsked = "0";
+  }
+  if (task_id) priv.taskId = String(task_id);
+  if (Object.keys(priv).length) requestBody.extendedProperties = { private: priv };
   const res = await calendar.events.insert({ calendarId, requestBody });
   return { ok: true, id: res.data.id, link: res.data.htmlLink };
 }

@@ -1,5 +1,6 @@
 import { Client } from "@notionhq/client";
 import { config, notionDb } from "./config.js";
+import { createEvent } from "./calendar.js";
 
 const notion = new Client({ auth: config.notionToken });
 
@@ -67,10 +68,8 @@ function taskSummary(page) {
     task: plainTitle(page, "Task"),
     status: selName(page, "Status"),
     priority: selName(page, "Priority"),
-    type: selName(page, "Type"),
     due: dateVal(page, "Due"),
-    energy: selName(page, "Energy"),
-    tags: tagVals(page, "Tags"),
+    area: selName(page, "Area"),
     goalIds: relationIds(page, "Goal"),
     notes: plainText(page, "Notes"),
   };
@@ -97,10 +96,10 @@ function goalSummary(page) {
 }
 
 // ---------- tool implementations ----------
-export async function listTasks({ status, tag } = {}) {
+export async function listTasks({ status, area } = {}) {
   const filters = [];
   if (status) filters.push({ property: "Status", select: { equals: status } });
-  if (tag) filters.push({ property: "Tags", multi_select: { contains: tag } });
+  if (area) filters.push({ property: "Area", select: { equals: area } });
   const res = await notion.databases.query({
     database_id: notionDb.tasks,
     filter: filters.length ? { and: filters } : undefined,
@@ -112,13 +111,10 @@ export async function listTasks({ status, tag } = {}) {
 export async function createTask(input) {
   const props = clean({
     Task: { title: title(input.task) },
-    Status: sel(input.status || "Inbox"),
+    Status: sel(input.status || "Not started"),
     Priority: sel(input.priority),
-    Type: sel(input.type),
     Due: date(input.due),
-    "Est (min)": num(input.est_min),
-    Energy: sel(input.energy),
-    Tags: multi(input.tags),
+    Area: sel(input.area),
     Goal: relation(input.goal_id),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
@@ -126,22 +122,54 @@ export async function createTask(input) {
     parent: { database_id: notionDb.tasks },
     properties: props,
   });
-  return { ok: true, id: page.id, task: input.task };
+  // Every task with a due date automatically goes on the calendar (all-day if
+  // the due is a plain date, timed if it includes a time). Non-fatal if it fails.
+  let calendar_event_id = null;
+  if (input.due) {
+    try {
+      const ev = await createEvent({
+        title: `📋 ${input.task}`,
+        start: input.due,
+        is_block: /T\d{2}:\d{2}/.test(String(input.due)), // only timed dues become follow-up blocks
+        task_id: page.id,
+      });
+      if (ev && ev.ok) calendar_event_id = ev.id;
+    } catch (e) {
+      console.error("task→calendar failed:", e.message);
+    }
+  }
+  return { ok: true, id: page.id, task: input.task, calendar_event_id };
 }
 
 export async function updateTask(input) {
   const props = clean({
     Status: sel(input.status),
     Priority: sel(input.priority),
-    Type: sel(input.type),
     Due: date(input.due),
-    Energy: sel(input.energy),
-    Tags: multi(input.tags),
+    Area: sel(input.area),
     Goal: relation(input.goal_id),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
   await notion.pages.update({ page_id: input.task_id, properties: props });
   return { ok: true, id: input.task_id };
+}
+
+// Open tasks that are due today or overdue (Status not Done), for the overdue
+// chase. Sorted by due date so the most-overdue surface first.
+export async function overdueTasks() {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: config.tz }); // YYYY-MM-DD in ET
+  const res = await notion.databases.query({
+    database_id: notionDb.tasks,
+    filter: {
+      and: [
+        { property: "Status", select: { does_not_equal: "Done" } },
+        { property: "Due", date: { on_or_before: today } },
+      ],
+    },
+    sorts: [{ property: "Due", direction: "ascending" }],
+    page_size: 50,
+  });
+  return res.results.map(taskSummary);
 }
 
 export async function listGoals({ status } = {}) {
@@ -342,46 +370,48 @@ export const notionTools = [
   {
     name: "list_tasks",
     description:
-      "List tasks from the Command Center. Filter by status (Inbox/Today/This Week/Doing/Waiting/Done) and/or tag (Wedding/Travel/Packing/Home/Errands/Admin/Finance/Health).",
+      "List tasks. Filter by status (Not started / In progress / Done) and/or area (Founder / Money / Health / Personal / Relationships / Learning). Omit both to see everything.",
     input_schema: {
       type: "object",
-      properties: { status: { type: "string" }, tag: { type: "string" } },
+      properties: { status: { type: "string" }, area: { type: "string" } },
     },
   },
   {
+    name: "list_overdue_tasks",
+    description:
+      "List tasks that are due today or overdue and NOT Done, most-overdue first. Call this at every check-in to chase what's slipping — push Pilar to finish or reschedule each one. Nothing past-due should just sit there.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "create_task",
-    description: "Create a new to-do. Goal link is optional; many tasks (errands, wedding, packing) have no goal. When the task clearly serves one of her Active goals, first call list_goals to get that goal's id, then pass it as goal_id so the to-do ladders up to the goal.",
+    description:
+      "Create a to-do. ALWAYS set a Due date — tasks without dates get dropped, and a dated task is AUTOMATICALLY added to Pilar's Google Calendar (so do NOT also call create_calendar_event for it). Set Priority by how it serves her goals/current sprint: High = directly moves a sprint/goal priority · Medium = matters but not top · Low = admin/personal/errand. Set Area. Link goal_id (from list_goals) when it ladders to a goal — many admin/errand/wedding tasks won't, and that's fine.",
     input_schema: {
       type: "object",
       properties: {
         task: { type: "string" },
-        status: { type: "string", enum: ["Inbox", "Today", "This Week", "Doing", "Waiting", "Done"] },
-        priority: { type: "string", enum: ["🔥 Must", "⭐ Should", "💭 Nice"] },
-        type: { type: "string", enum: ["Task", "Idea", "Reply", "Admin", "Errand", "Workout", "Reading"] },
-        due: { type: "string", description: "ISO date YYYY-MM-DD" },
-        est_min: { type: "number" },
-        energy: { type: "string", enum: ["High", "Med", "Low"] },
-        tags: { type: "array", items: { type: "string" } },
-        goal_id: { type: "string", description: "Notion page id of the goal this task ladders up to (from list_goals). Optional — omit when no goal fits." },
+        due: { type: "string", description: "Plain local date YYYY-MM-DD (add a time as YYYY-MM-DDTHH:MM:SS only if it's time-specific). Auto-added to the calendar." },
+        priority: { type: "string", enum: ["High", "Medium", "Low"], description: "By goal-alignment (High serves a sprint/goal priority; Low is admin/personal)." },
+        status: { type: "string", enum: ["Not started", "In progress", "Done"] },
+        area: { type: "string", enum: ["Founder", "Money", "Health", "Personal", "Relationships", "Learning"] },
+        goal_id: { type: "string", description: "Notion goal id (from list_goals) when the task ladders to a goal. Optional." },
         notes: { type: "string" },
       },
-      required: ["task"],
+      required: ["task", "due"],
     },
   },
   {
     name: "update_task",
-    description: "Update a task by id. To mark done, set status to 'Done'. Pass goal_id to link it to a goal (from list_goals).",
+    description: "Update a task by id. Mark done → status 'Done'. Reschedule → set a new due. Also change priority/area, link a goal, or edit notes.",
     input_schema: {
       type: "object",
       properties: {
         task_id: { type: "string" },
-        status: { type: "string" },
-        priority: { type: "string" },
-        type: { type: "string" },
-        due: { type: "string" },
-        energy: { type: "string" },
-        tags: { type: "array", items: { type: "string" } },
-        goal_id: { type: "string", description: "Notion page id of the goal to link (from list_goals)." },
+        status: { type: "string", enum: ["Not started", "In progress", "Done"] },
+        priority: { type: "string", enum: ["High", "Medium", "Low"] },
+        due: { type: "string", description: "New due date YYYY-MM-DD (or with a time)." },
+        area: { type: "string", enum: ["Founder", "Money", "Health", "Personal", "Relationships", "Learning"] },
+        goal_id: { type: "string", description: "Notion goal id to link (from list_goals)." },
         notes: { type: "string" },
       },
       required: ["task_id"],
@@ -517,6 +547,7 @@ export const notionTools = [
 export async function runNotionTool(name, input) {
   switch (name) {
     case "list_tasks": return listTasks(input);
+    case "list_overdue_tasks": return overdueTasks(input);
     case "create_task": return createTask(input);
     case "update_task": return updateTask(input);
     case "list_goals": return listGoals(input);
