@@ -1,6 +1,6 @@
 import { Client } from "@notionhq/client";
 import { config, notionDb } from "./config.js";
-import { createEvent } from "./calendar.js";
+import { createEvent, upsertTaskEvent } from "./calendar.js";
 
 const notion = new Client({ auth: config.notionToken });
 
@@ -221,6 +221,23 @@ export async function updateTask(input) {
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
   await notion.pages.update({ page_id: input.task_id, properties: props });
+  // If the due date changed, MOVE the task's calendar block to the new day (or
+  // create one if missing) — a rescheduled task is never left off the calendar.
+  // If it was marked Done, remove its block so the calendar isn't cluttered.
+  try {
+    if (input.status === "Done") {
+      await upsertTaskEvent({ task_id: input.task_id, start: null }).catch(() => {});
+    } else if (input.due) {
+      let title = input.task;
+      if (!title) {
+        const pg = await notion.pages.retrieve({ page_id: input.task_id });
+        title = plainTitle(pg, "Task");
+      }
+      await upsertTaskEvent({ task_id: input.task_id, start: input.due, title: `📋 ${title}` });
+    }
+  } catch (e) {
+    console.error("task reschedule→calendar failed:", e.message);
+  }
   return { ok: true, id: input.task_id };
 }
 

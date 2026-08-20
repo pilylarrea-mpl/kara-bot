@@ -76,6 +76,33 @@ export async function createEvent({ title, start, end, description, is_block, ta
   return { ok: true, id: res.data.id, link: res.data.htmlLink };
 }
 
+// Move (or create) the calendar event linked to a task — so rescheduling a task
+// also moves its block instead of leaving a stale one on the old day. Finds the
+// event by its taskId, deletes it, and recreates it on the new date.
+export async function upsertTaskEvent({ task_id, start, title }) {
+  if (!calendarEnabled) return NOT_READY;
+  try {
+    const found = await calendar.events.list({
+      calendarId,
+      privateExtendedProperty: `taskId=${task_id}`,
+      singleEvents: true,
+      maxResults: 5,
+    });
+    for (const ev of found.data.items || []) {
+      await calendar.events.delete({ calendarId, eventId: ev.id }).catch(() => {});
+    }
+  } catch (e) {
+    /* ignore lookup errors — we'll just create a fresh one */
+  }
+  if (!start) return { ok: true, removed: true }; // done/cleared — just remove the block
+  return createEvent({
+    title: title || "📋 task",
+    start,
+    task_id,
+    is_block: /T\d{2}:\d{2}/.test(String(start)),
+  });
+}
+
 // Kara-tagged focus blocks whose end time just passed and that haven't been
 // followed up yet. Mirrors dueReminders() for the accountability loop.
 export async function endedBlocks({ windowMs = 90 * 1000 } = {}) {

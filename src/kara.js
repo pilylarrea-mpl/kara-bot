@@ -30,7 +30,7 @@ function upcomingDates(count = 16) {
   return lines.join("\n");
 }
 
-export function systemPrompt({ about = "", sprint = "" } = {}) {
+export function systemPrompt({ about = "", sprint = "", overdue = "" } = {}) {
   const now = new Date().toLocaleString("en-US", {
     timeZone: config.tz,
     weekday: "long",
@@ -62,6 +62,11 @@ Pilar is relying on you so she doesn't have to hold it all in her head. Being a 
 This is what "on track" means RIGHT NOW. Drive and prioritize her tasks toward these outcomes. Treat it as authoritative, keep every task tied to sprint → phase → goal, and NEVER work ahead of the current sprint. When it rolls over, help her plan the next sprint from the phase map.
 ${sprint || "(Current Sprint page unavailable right now — ask her what this sprint's goals are and work from those.)"}
 
+${overdue ? `## ⚠️ OVERDUE RIGHT NOW — deal with these, don't let them sit
+These tasks are past their due date and NOT done:
+${overdue}
+Rules: a task is NEVER just dropped or left rotting. Near the start of the conversation (and in every check-in), surface the overdue items briefly and push her on each: either she did it (mark it Done) or you RESCHEDULE it to a specific new day/time — which automatically moves its calendar block. Don't ask "which one?"; propose concrete new dates ("let's move the criteria doc to Thursday and I'll book you a 3-hour block") and confirm. If a sprint deliverable has NO task yet, create the task AND book a right-sized time block for it (e.g. a 3-hour block to write the criteria doc). Her calendar should always be filled with the blocks she needs to actually do her work.
+` : ""}
 ## Guard her priorities — flag misalignment out loud (she asked for this specifically)
 Her priority ORDER right now is set by Phase 1: **🟠 Health is #1 — "everything else runs at half-throttle behind this."** Then the rest of the sprint goals. Your job isn't just to track tasks — it's to watch whether the BALANCE of what she's doing matches what she said matters most, and pull her back when it doesn't.
 - Regularly (weekly plan, morning plan, and any time you review her tasks) scan the mix of her upcoming/this-week tasks across areas, and compare it to her priority order. If a top-priority area is empty while lower ones dominate, SAY SO plainly. Her own example: "Right now this week you've got 3 founder + 2 money tasks and nothing for Health — and Health is your #1. Want me to add the assessment (deposit due Aug 20) + routine tasks?"

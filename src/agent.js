@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { systemPrompt } from "./kara.js";
-import { notionTools, runNotionTool, getAboutPilar, getCurrentSprint } from "./notion.js";
+import { notionTools, runNotionTool, getAboutPilar, getCurrentSprint, overdueTasks } from "./notion.js";
 import { calendarTools, runCalendarTool } from "./calendar.js";
 import { gmailTools, runGmailTool } from "./gmail.js";
 import { memoryTools, runMemoryTool } from "./memory.js";
@@ -56,15 +56,23 @@ function sanitizeHistory(msgs) {
 export async function runAgent(messages) {
   const convo = sanitizeHistory([...messages]);
 
-  // Pull shared memory (About Pilar page) + the live current sprint once per run
-  // — both are cached ~5 min in notion.js so this is cheap.
-  const [about, sprint] = await Promise.all([getAboutPilar(), getCurrentSprint()]);
+  // Pull shared memory (About Pilar page), the live current sprint, and any
+  // overdue tasks once per run so Kara is always aware of what's slipping.
+  const [about, sprint, overdue] = await Promise.all([
+    getAboutPilar(),
+    getCurrentSprint(),
+    overdueTasks().catch(() => []),
+  ]);
+  const overdueText = (overdue || [])
+    .slice(0, 20)
+    .map((t) => `- ${t.task} (due ${t.due}${t.priority ? ", " + t.priority : ""}${t.area ? ", " + t.area : ""})`)
+    .join("\n");
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await client.beta.messages.create({
       model: config.model,
       max_tokens: 4096,
-      system: systemPrompt({ about, sprint }),
+      system: systemPrompt({ about, sprint, overdue: overdueText }),
       tools: allTools,
       messages: convo,
       betas: [WEB_FETCH_BETA],
