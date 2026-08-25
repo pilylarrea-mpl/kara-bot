@@ -108,13 +108,15 @@ scheduleSlot("0 15 * * *", "afternoon");
 scheduleSlot("0 21 * * *", "evening");
 scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
 
-// ---------- Auto-build the calendar (every morning at 5am ET) ----------
-// Keep a rolling 7-day window time-blocked automatically: workout + weekday
+// ---------- Auto-build the calendar (hourly, waking hours) ----------
+// Continuously keeps a rolling 7-day window time-blocked: workout + weekday
 // founder block + every dated task placed into open slots around fixed events.
-// Non-destructive — only adds missing blocks, so it respects her manual changes.
-// Runs before the 7am plan-review so she wakes up to a built calendar.
+// Self-correcting — reconciles against Notion each run (removes blocks for done/
+// rescheduled tasks, adds new ones), so changes made anywhere (Kara, Pily, by
+// hand) flow onto the calendar within the hour. Today starts from the current
+// time so running mid-day never books the past.
 cron.schedule(
-  "0 5 * * *",
+  "0 6-22 * * *",
   () =>
     enqueue(async () => {
       try {

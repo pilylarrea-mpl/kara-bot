@@ -1,6 +1,6 @@
 import { Client } from "@notionhq/client";
 import { config, notionDb } from "./config.js";
-import { createEvent, upsertTaskEvent } from "./calendar.js";
+import { createEvent } from "./calendar.js";
 
 const notion = new Client({ auth: config.notionToken });
 
@@ -192,23 +192,9 @@ export async function createTask(input) {
     parent: { database_id: notionDb.tasks },
     properties: props,
   });
-  // Every task with a due date automatically goes on the calendar (all-day if
-  // the due is a plain date, timed if it includes a time). Non-fatal if it fails.
-  let calendar_event_id = null;
-  if (input.due) {
-    try {
-      const ev = await createEvent({
-        title: `📋 ${input.task}`,
-        start: input.due,
-        is_block: /T\d{2}:\d{2}/.test(String(input.due)), // only timed dues become follow-up blocks
-        task_id: page.id,
-      });
-      if (ev && ev.ok) calendar_event_id = ev.id;
-    } catch (e) {
-      console.error("task→calendar failed:", e.message);
-    }
-  }
-  return { ok: true, id: page.id, task: input.task, calendar_event_id };
+  // The continuous auto-scheduler (scheduler.js) time-blocks this task on its due
+  // date on the next run — no calendar event is created here.
+  return { ok: true, id: page.id, task: input.task };
 }
 
 export async function updateTask(input) {
@@ -221,24 +207,20 @@ export async function updateTask(input) {
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
   await notion.pages.update({ page_id: input.task_id, properties: props });
-  // If the due date changed, MOVE the task's calendar block to the new day (or
-  // create one if missing) — a rescheduled task is never left off the calendar.
-  // If it was marked Done, remove its block so the calendar isn't cluttered.
-  try {
-    if (input.status === "Done") {
-      await upsertTaskEvent({ task_id: input.task_id, start: null }).catch(() => {});
-    } else if (input.due) {
-      let title = input.task;
-      if (!title) {
-        const pg = await notion.pages.retrieve({ page_id: input.task_id });
-        title = plainTitle(pg, "Task");
-      }
-      await upsertTaskEvent({ task_id: input.task_id, start: input.due, title: `📋 ${title}` });
-    }
-  } catch (e) {
-    console.error("task reschedule→calendar failed:", e.message);
-  }
+  // Calendar re-flow (moving/removing the task's block on reschedule or done) is
+  // handled by the continuous auto-scheduler, which reconciles against Notion.
   return { ok: true, id: input.task_id };
+}
+
+// Fetch one task's current state (status/due) — used by the scheduler to
+// reconcile calendar blocks against the source of truth (Notion).
+export async function getTaskById(id) {
+  try {
+    const pg = await notion.pages.retrieve({ page_id: id });
+    return taskSummary(pg);
+  } catch {
+    return null;
+  }
 }
 
 // Not-done tasks due on a specific day (YYYY-MM-DD) — for the auto-scheduler.

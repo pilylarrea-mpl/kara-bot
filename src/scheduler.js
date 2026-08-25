@@ -1,6 +1,6 @@
 import { config } from "./config.js";
-import { tasksDueOn } from "./notion.js";
-import { listDay, createEvent, calendarEnabled } from "./calendar.js";
+import { tasksDueOn, getTaskById } from "./notion.js";
+import { listDay, createEvent, deleteEvent, calendarEnabled } from "./calendar.js";
 
 // Auto-scheduler: builds Pilar's calendar for her. For each upcoming day it
 // places her daily requirements (workout, weekday founder block) + every task
@@ -28,12 +28,16 @@ const addDaysYmd = (ymd, n) => {
 export function etTodayYmd() {
   return new Date().toLocaleDateString("en-CA", { timeZone: config.tz });
 }
+function etNowMin() {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: config.tz, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+  return (+p.find((x) => x.type === "hour").value % 24) * 60 + +p.find((x) => x.type === "minute").value;
+}
 
-// Find the earliest open slot of `dur` minutes within [DAY_START, DAY_END]
+// Find the earliest open slot of `dur` minutes within [dayStart, DAY_END]
 // that doesn't overlap any busy interval; returns start-minute or null.
-function findSlot(busy, dur) {
+function findSlot(busy, dur, dayStart) {
   const sorted = [...busy].sort((a, b) => a.startMin - b.startMin);
-  let cursor = DAY_START;
+  let cursor = dayStart;
   for (const b of sorted) {
     if (b.endMin <= cursor) continue;
     if (b.startMin - cursor >= dur) return cursor;
@@ -45,15 +49,33 @@ function findSlot(busy, dur) {
 // Plan one day. { dryRun } to preview without creating events.
 export async function planDay(ymd, { dryRun = false } = {}) {
   if (!calendarEnabled) return { ymd, skipped: "calendar-off" };
-  const events = await listDay(ymd);
+  let events = await listDay(ymd);
   // Only the ✈️ Away/travel block marks an out-of-office day — NOT task markers
   // that happen to contain words like "wedding" or "travel".
   if (events.some((e) => e.allDay && (e.summary.includes("✈️") || /\baway\b/i.test(e.summary)))) {
-    return { ymd, skipped: "away", placed: [] };
+    return { ymd, skipped: "away", placed: [], removed: [] };
   }
+  // RECONCILE: drop our own timed task blocks that no longer belong on this day —
+  // the task is Done, was deleted, or its due date moved. Keeps the calendar
+  // honest against Notion no matter who changed things (Kara, Pily, or by hand).
+  const removed = [];
+  const kept = [];
+  for (const e of events) {
+    if (e.timed && e.taskId) {
+      const t = await getTaskById(e.taskId);
+      if (!t || t.status === "Done" || (t.due && t.due.slice(0, 10) !== ymd)) {
+        if (!dryRun) await deleteEvent({ event_id: e.id }).catch(() => {});
+        removed.push(e.summary);
+        continue;
+      }
+    }
+    kept.push(e);
+  }
+  events = kept;
   const busy = events.filter((e) => e.timed).map((e) => ({ startMin: e.startMin, endMin: e.endMin }));
   const summaries = events.filter((e) => e.timed).map((e) => e.summary.toLowerCase());
   const blockedTaskIds = new Set(events.filter((e) => e.timed && e.taskId).map((e) => e.taskId));
+  const dayStart = ymd === etTodayYmd() ? Math.max(DAY_START, etNowMin() + 15) : DAY_START;
 
   const toPlace = [];
   if (!summaries.some((s) => s.includes("workout"))) toPlace.push({ title: "🏋️ Workout", dur: 90 });
@@ -72,7 +94,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   const placed = [];
   const unplaced = [];
   for (const item of toPlace) {
-    const startMin = findSlot(busy, item.dur);
+    const startMin = findSlot(busy, item.dur, dayStart);
     if (startMin == null) { unplaced.push(item.title); continue; }
     const endMin = startMin + item.dur;
     busy.push({ startMin, endMin });
@@ -85,7 +107,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
     }
     placed.push(`${minToHHMM(startMin)}–${minToHHMM(endMin)} ${item.title}`);
   }
-  return { ymd, placed, unplaced };
+  return { ymd, placed, unplaced, removed };
 }
 
 // Plan the next `days` days starting today (skips days already fully handled).
