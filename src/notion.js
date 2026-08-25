@@ -241,6 +241,21 @@ export async function updateTask(input) {
   return { ok: true, id: input.task_id };
 }
 
+// Not-done tasks due on a specific day (YYYY-MM-DD) — for the auto-scheduler.
+export async function tasksDueOn(dateYmd) {
+  const res = await notion.databases.query({
+    database_id: notionDb.tasks,
+    filter: {
+      and: [
+        { property: "Status", select: { does_not_equal: "Done" } },
+        { property: "Due", date: { equals: dateYmd } },
+      ],
+    },
+    page_size: 100,
+  });
+  return res.results.map(taskSummary);
+}
+
 // Open tasks that are due today or overdue (Status not Done), for the overdue
 // chase. Sorted by due date so the most-overdue surface first.
 export async function overdueTasks() {

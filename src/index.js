@@ -8,6 +8,7 @@ import { dueReminders, listPendingMeetings, setLogProcessing } from "./notion.js
 import { endedBlocks, markBlockFollowedUp } from "./calendar.js";
 import { transcribeAudio, transcribeEnabled } from "./transcribe.js";
 import { shouldPingReminder, markReminderPinged } from "./memory.js";
+import { planAhead } from "./scheduler.js";
 
 const bot = new Bot(config.telegramToken);
 
@@ -106,6 +107,26 @@ scheduleSlot("0 12 * * *", "midday");
 scheduleSlot("0 15 * * *", "afternoon");
 scheduleSlot("0 21 * * *", "evening");
 scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
+
+// ---------- Auto-build the calendar (every morning at 5am ET) ----------
+// Keep a rolling 7-day window time-blocked automatically: workout + weekday
+// founder block + every dated task placed into open slots around fixed events.
+// Non-destructive — only adds missing blocks, so it respects her manual changes.
+// Runs before the 7am plan-review so she wakes up to a built calendar.
+cron.schedule(
+  "0 5 * * *",
+  () =>
+    enqueue(async () => {
+      try {
+        const out = await planAhead(7);
+        const placed = out.reduce((n, d) => n + (d.placed?.length || 0), 0);
+        console.log(`auto-schedule: placed ${placed} blocks across 7 days`);
+      } catch (e) {
+        console.error("auto-schedule failed:", e);
+      }
+    }),
+  { timezone: config.tz }
+);
 
 // ---------- Reminder follow-ups (every minute) ----------
 // Kara re-pings each due reminder on an interval until Pilar marks it Done — she

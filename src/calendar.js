@@ -144,6 +144,48 @@ export async function markBlockFollowedUp(eventId) {
   });
 }
 
+// ET UTC-offset ("-04:00"/"-05:00") for a given date, DST-aware.
+function etOffset(dateYmd) {
+  const s = new Intl.DateTimeFormat("en-US", { timeZone: TZ, timeZoneName: "shortOffset" })
+    .formatToParts(new Date(dateYmd + "T12:00:00Z"))
+    .find((p) => p.type === "timeZoneName").value;
+  const m = s.match(/GMT([+-]?\d+)/);
+  const off = m ? parseInt(m[1], 10) : -5;
+  return `${off < 0 ? "-" : "+"}${String(Math.abs(off)).padStart(2, "0")}:00`;
+}
+// ET minutes-of-day (0–1439) for an instant.
+function etMinutes(dateObj) {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
+    .formatToParts(dateObj);
+  return +p.find((x) => x.type === "hour").value % 24 * 60 + +p.find((x) => x.type === "minute").value;
+}
+
+// All events on a given ET calendar day, normalized for the scheduler.
+export async function listDay(dateYmd) {
+  if (!calendarEnabled) return [];
+  const off = etOffset(dateYmd);
+  const res = await calendar.events.list({
+    calendarId,
+    timeMin: `${dateYmd}T00:00:00${off}`,
+    timeMax: `${dateYmd}T23:59:59${off}`,
+    singleEvents: true,
+    orderBy: "startTime",
+    maxResults: 100,
+  });
+  return (res.data.items || []).map((e) => {
+    const allDay = !e.start?.dateTime;
+    return {
+      id: e.id,
+      summary: e.summary || "",
+      allDay,
+      startMin: allDay ? 0 : etMinutes(new Date(e.start.dateTime)),
+      endMin: allDay ? 1440 : etMinutes(new Date(e.end.dateTime)),
+      taskId: e.extendedProperties?.private?.taskId || null,
+      timed: !allDay,
+    };
+  });
+}
+
 export async function listEvents({ time_min, time_max, query } = {}) {
   if (!calendarEnabled) return NOT_READY;
   const now = new Date();
