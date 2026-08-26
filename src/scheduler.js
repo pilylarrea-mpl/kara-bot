@@ -62,9 +62,12 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   if (events.some((e) => e.allDay && (e.summary.includes("✈️") || /\baway\b/i.test(e.summary)))) {
     return { ymd, skipped: "away", placed: [], removed: [] };
   }
-  // A flight anywhere on the day makes it a TRAVEL day: we sweep any task blocks
-  // off it (below) and place nothing new — never pack to-dos around a flight.
-  const travelDay = events.some((e) => /✈️|\bflight\b/i.test(e.summary));
+  // A real flight on the day makes it a TRAVEL day: we sweep any task blocks off
+  // it (below) and place nothing new — never pack to-dos around a flight. Only
+  // real appointments count; our own "📋 Buy flight…" / "⏰…" blocks don't.
+  const travelDay = events.some(
+    (e) => !e.summary.startsWith("📋") && !e.summary.startsWith("⏰") && /✈️|\bflight\b/i.test(e.summary)
+  );
   // Classify what's on the day. FIXED = real meetings/appointments we must never
   // overlap (anything timed that ISN'T one of our own blocks or a reminder).
   // A 📋 block is ALWAYS one of ours — even if it's a legacy orphan missing the
