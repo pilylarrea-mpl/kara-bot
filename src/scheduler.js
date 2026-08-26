@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { tasksDueOn, getTaskById, overdueTasks, updateTask } from "./notion.js";
+import { tasksDueOn, getTaskById } from "./notion.js";
 import { listDay, createEvent, deleteEvent, calendarEnabled } from "./calendar.js";
 
 // Auto-scheduler: builds Pilar's calendar for her. For each upcoming day it
@@ -71,7 +71,6 @@ export async function planDay(ymd, { dryRun = false } = {}) {
     .filter((e) => e.timed && !isTaskBlock(e) && !isReqBlock(e) && !isReminder(e))
     .map((e) => ({ startMin: e.startMin, endMin: e.endMin }));
   const overlapsFixed = (a) => fixed.some((f) => a.startMin < f.endMin && f.startMin < a.endMin);
-  const weekend = !isWeekday(ymd);
 
   // RECONCILE: remove our own blocks that shouldn't be here so they get re-placed:
   //  - a task block that's stale (task Done/deleted/moved) OR on a weekend (rolls
@@ -82,14 +81,10 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   const kept = [];
   for (const e of events) {
     if (isTaskBlock(e)) {
-      let drop = overlapsFixed(e);
-      if (!drop && weekend) {
-        drop = true;
-        if (!dryRun) await updateTask({ task_id: e.taskId, due: nextWeekdayYmd(ymd) }).catch(() => {});
-      }
+      let drop = overlapsFixed(e); // moved-off an appointment
       if (!drop) {
         const t = await getTaskById(e.taskId);
-        drop = !t || t.status === "Done" || (t.due && t.due.slice(0, 10) !== ymd);
+        drop = !t || t.status === "Done" || (t.due && t.due.slice(0, 10) !== ymd); // done/deleted/moved by Pilar
       }
       if (drop) {
         if (!dryRun) await deleteEvent({ event_id: e.id }).catch(() => {});
@@ -97,7 +92,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
         continue;
       }
     } else if (isReqBlock(e)) {
-      if (overlapsFixed(e) || (weekend && /🚀|founder/i.test(e.summary))) {
+      if (overlapsFixed(e)) {
         if (!dryRun) await deleteEvent({ event_id: e.id }).catch(() => {});
         removed.push(e.summary);
         continue;
@@ -128,8 +123,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
       prio: t.priority,
       deadline: t.deadline ? t.deadline.slice(0, 10) : null,
     };
-    if (weekend) unplaced.push(item); // no task-work on weekends → rolls to a weekday
-    else toPlace.push(item);
+    toPlace.push(item);
   }
   // requirements first; then tasks with the SOONEST deadline first (so hard
   // deadlines get scheduled before they're due), then by priority.
@@ -159,43 +153,20 @@ export async function planDay(ymd, { dryRun = false } = {}) {
     }
     placed.push(`${minToHHMM(startMin)}–${minToHHMM(endMin)} ${item.title}`);
   }
-  // AUTO-ROLL: any task that didn't fit rolls to the next WEEKDAY (Motion-style) —
-  // UNLESS rolling would push it past its hard deadline, in which case we keep it
-  // on this day (so it stays on/before the deadline) and flag it as at-risk.
-  const nxt = nextWeekdayYmd(ymd);
-  const atRisk = [];
-  for (const item of unplaced) {
-    if (!item.task_id) continue;
-    if (item.deadline && nxt > item.deadline) {
-      atRisk.push(item.title); // can't fit before its deadline — Kara should flag this
-    } else if (!dryRun) {
-      await updateTask({ task_id: item.task_id, due: nxt }).catch(() => {});
-    }
-  }
-  return { ymd, placed, unplaced: unplaced.map((i) => i.title), removed, atRisk };
+  // We NEVER silently roll a task's date — every task stays on the day Pilar
+  // committed it to. Anything that didn't fit is returned as `overflow` so Kara
+  // can flag the overloaded day and let HER decide what to move. Deadline tasks
+  // are front-loaded above, so `atRisk` = any with a deadline that still couldn't
+  // fit (Kara should warn about those specifically).
+  const overflow = unplaced.map((i) => i.title);
+  const atRisk = unplaced.filter((i) => i.deadline).map((i) => i.title);
+  return { ymd, placed, overflow, removed, atRisk };
 }
 
-// Pull every overdue (past-due, not-done) task onto today so it re-enters the
-// schedule — nothing is left rotting in the past. Overflow then auto-rolls
-// forward day by day via planDay. Motion-style: incomplete work keeps moving.
-export async function absorbOverdue({ dryRun = false } = {}) {
-  if (!calendarEnabled) return 0;
-  const today = etTodayYmd();
-  const od = await overdueTasks();
-  let moved = 0;
-  for (const t of od) {
-    if (t.due && t.due.slice(0, 10) < today) {
-      if (!dryRun) await updateTask({ task_id: t.id, due: today }).catch(() => {});
-      moved++;
-    }
-  }
-  return moved;
-}
-
-// Plan the next `days` days starting today. First absorbs overdue work, then
-// packs each day (rolling overflow forward). This is the continuous engine.
+// Plan the next `days` days starting today. Each day is time-blocked around
+// what's fixed; tasks stay on the day Pilar set (no auto-rolling). This is the
+// continuous engine that keeps her calendar built and re-flowed.
 export async function planAhead(days = 7, { dryRun = false } = {}) {
-  await absorbOverdue({ dryRun });
   const out = [];
   let ymd = etTodayYmd();
   for (let i = 0; i < days; i++) {
