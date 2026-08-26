@@ -62,6 +62,9 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   if (events.some((e) => e.allDay && (e.summary.includes("✈️") || /\baway\b/i.test(e.summary)))) {
     return { ymd, skipped: "away", placed: [], removed: [] };
   }
+  // A flight anywhere on the day makes it a TRAVEL day: we sweep any task blocks
+  // off it (below) and place nothing new — never pack to-dos around a flight.
+  const travelDay = events.some((e) => /✈️|\bflight\b/i.test(e.summary));
   // Classify what's on the day. FIXED = real meetings/appointments we must never
   // overlap (anything timed that ISN'T one of our own blocks or a reminder).
   // A 📋 block is ALWAYS one of ours — even if it's a legacy orphan missing the
@@ -85,6 +88,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   for (const e of events) {
     if (isTaskBlock(e)) {
       let drop = overlapsFixed(e); // moved-off an appointment
+      if (!drop && travelDay) drop = true; // clear all to-dos off a travel day
       if (!drop && !e.taskId) {
         // Legacy orphan with no taskId tag — always sweep it. If the underlying
         // task is still open + due today, it gets re-placed below with a proper
@@ -109,9 +113,17 @@ export async function planDay(ymd, { dryRun = false } = {}) {
     kept.push(e);
   }
   events = kept;
+  // Travel day: reconcile cleared the to-dos, now place nothing new.
+  if (travelDay) return { ymd, skipped: "travel", placed: [], overflow: [], removed, atRisk: [] };
   const busy = events.filter((e) => e.timed).map((e) => ({ startMin: e.startMin, endMin: e.endMin }));
   const summaries = events.filter((e) => e.timed).map((e) => e.summary.toLowerCase());
   const blockedTaskIds = new Set(events.filter((e) => isTaskBlock(e)).map((e) => e.taskId));
+  // Titles of real appointments already on the day (emoji/prefix stripped) so we
+  // never place a task block that duplicates something already on the calendar.
+  const norm = (s) => s.replace(/^[^\p{L}\p{N}]+/u, "").toLowerCase().trim();
+  const fixedTitles = new Set(
+    events.filter((e) => e.timed && !isTaskBlock(e) && !isReqBlock(e) && !isReminder(e)).map((e) => norm(e.summary))
+  );
   const dayStart = ymd === etTodayYmd() ? Math.max(DAY_START, etNowMin() + 15) : DAY_START;
 
   const toPlace = [];
@@ -124,6 +136,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   const due = await tasksDueOn(ymd);
   for (const t of due) {
     if (blockedTaskIds.has(t.id)) continue; // already has a timed block
+    if (fixedTitles.has(norm(t.task))) continue; // already a real appointment on the calendar
     const item = {
       title: `📋 ${t.task}`,
       dur: t.est && t.est > 0 ? t.est : DUR[t.priority] || 30,
