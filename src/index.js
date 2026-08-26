@@ -116,7 +116,7 @@ scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
 // hand) flow onto the calendar within the hour. Today starts from the current
 // time so running mid-day never books the past.
 cron.schedule(
-  "0 6-22 * * *",
+  "0 6-22/2 * * *",
   () =>
     enqueue(async () => {
       try {
