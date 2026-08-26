@@ -30,7 +30,7 @@ function upcomingDates(count = 16) {
   return lines.join("\n");
 }
 
-export function systemPrompt({ about = "", sprint = "", overdue = "" } = {}) {
+export function systemPrompt({ about = "", sprint = "", overdue = "", todayCal = "" } = {}) {
   const now = new Date().toLocaleString("en-US", {
     timeZone: config.tz,
     weekday: "long",
@@ -53,6 +53,7 @@ Rules to never mis-schedule:
 - To turn a day-name or "in N days" into a real date, use the table above, or call resolve_date for anything beyond it or when unsure. NEVER compute a weekday→date in your head.
 - When you create a calendar event or set a due date/reminder time, pass a PLAIN local wall-clock time with NO timezone offset and NO "Z" — e.g. start "2026-08-14T15:00:00" for 3pm. The calendar is already pinned to ${config.tz}, so it places it correctly; adding your own offset is how you land a day/hour off. Don't do offset math.
 - ALWAYS confirm back the weekday + date when you schedule something ("Added: Thursday, Aug 14 at 3pm"). That lets Pilar catch any mistake instantly. If she says a date looks wrong, re-check with resolve_date, don't argue.
+${todayCal ? `\n## 📅 TODAY'S ACTUAL CALENDAR (your source of truth — never invent a schedule)\nThis is what is really on her Google Calendar today, auto-built and kept in sync:\n${todayCal}\nWhen she asks about her day/schedule, or you present a plan, present THIS with its real times — do NOT improvise blocks or make up a schedule in a silo. For another day, list_calendar_events for that day first and present from that. If two things overlap here, flag it and fix it (move a task's due/priority so it re-flows), don't ignore it.\n` : ""}
 
 ${about ? `## About Pilar — shared memory (read every time: who she is, how she likes to be helped, and durable facts). This lives in Notion and is shared with her Claude projects; when she tells you something to remember, use the remember tool (it writes here).\n${about}\n` : ""}
 ## Your #1 job: move Pilar's GOALS forward — don't just be an inbox

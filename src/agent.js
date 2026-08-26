@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { systemPrompt } from "./kara.js";
 import { notionTools, runNotionTool, getAboutPilar, getCurrentSprint, overdueTasks } from "./notion.js";
-import { calendarTools, runCalendarTool } from "./calendar.js";
+import { calendarTools, runCalendarTool, todaySchedule } from "./calendar.js";
 import { gmailTools, runGmailTool } from "./gmail.js";
 import { memoryTools, runMemoryTool } from "./memory.js";
 
@@ -58,10 +58,11 @@ export async function runAgent(messages) {
 
   // Pull shared memory (About Pilar page), the live current sprint, and any
   // overdue tasks once per run so Kara is always aware of what's slipping.
-  const [about, sprint, overdue] = await Promise.all([
+  const [about, sprint, overdue, todayCal] = await Promise.all([
     getAboutPilar(),
     getCurrentSprint(),
     overdueTasks().catch(() => []),
+    todaySchedule().catch(() => ""),
   ]);
   const overdueText = (overdue || [])
     .slice(0, 20)
@@ -72,7 +73,7 @@ export async function runAgent(messages) {
     const res = await client.beta.messages.create({
       model: config.model,
       max_tokens: 4096,
-      system: systemPrompt({ about, sprint, overdue: overdueText }),
+      system: systemPrompt({ about, sprint, overdue: overdueText, todayCal }),
       tools: allTools,
       messages: convo,
       betas: [WEB_FETCH_BETA],

@@ -55,15 +55,30 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   if (events.some((e) => e.allDay && (e.summary.includes("✈️") || /\baway\b/i.test(e.summary)))) {
     return { ymd, skipped: "away", placed: [], removed: [] };
   }
-  // RECONCILE: drop our own timed task blocks that no longer belong on this day —
-  // the task is Done, was deleted, or its due date moved. Keeps the calendar
-  // honest against Notion no matter who changed things (Kara, Pily, or by hand).
+  // Classify what's on the day. FIXED = real meetings/appointments we must never
+  // overlap (anything timed that ISN'T one of our own blocks or a reminder).
+  const isTaskBlock = (e) => e.timed && e.summary.startsWith("📋") && e.taskId;
+  const isReqBlock = (e) => e.timed && /🏋️|🚀|workout|founder/i.test(e.summary);
+  const isReminder = (e) => e.timed && e.summary.startsWith("⏰");
+  const fixed = events
+    .filter((e) => e.timed && !isTaskBlock(e) && !isReqBlock(e) && !isReminder(e))
+    .map((e) => ({ startMin: e.startMin, endMin: e.endMin }));
+  const overlapsFixed = (a) => fixed.some((f) => a.startMin < f.endMin && f.startMin < a.endMin);
+
+  // RECONCILE: remove our own blocks that shouldn't be here so they get re-placed:
+  //  - a task block whose task is Done / deleted / moved to another day (stale)
+  //  - ANY of our blocks (task or workout/founder) that overlaps a real appointment
+  // Reminders and the fixed appointments themselves are never touched.
   const removed = [];
   const kept = [];
   for (const e of events) {
-    if (e.timed && e.taskId) {
-      const t = await getTaskById(e.taskId);
-      if (!t || t.status === "Done" || (t.due && t.due.slice(0, 10) !== ymd)) {
+    if (isTaskBlock(e) || isReqBlock(e)) {
+      let drop = overlapsFixed(e);
+      if (!drop && isTaskBlock(e)) {
+        const t = await getTaskById(e.taskId);
+        drop = !t || t.status === "Done" || (t.due && t.due.slice(0, 10) !== ymd);
+      }
+      if (drop) {
         if (!dryRun) await deleteEvent({ event_id: e.id }).catch(() => {});
         removed.push(e.summary);
         continue;
@@ -74,7 +89,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   events = kept;
   const busy = events.filter((e) => e.timed).map((e) => ({ startMin: e.startMin, endMin: e.endMin }));
   const summaries = events.filter((e) => e.timed).map((e) => e.summary.toLowerCase());
-  const blockedTaskIds = new Set(events.filter((e) => e.timed && e.taskId).map((e) => e.taskId));
+  const blockedTaskIds = new Set(events.filter((e) => isTaskBlock(e)).map((e) => e.taskId));
   const dayStart = ymd === etTodayYmd() ? Math.max(DAY_START, etNowMin() + 15) : DAY_START;
 
   const toPlace = [];

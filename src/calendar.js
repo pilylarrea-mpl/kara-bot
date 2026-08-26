@@ -186,6 +186,18 @@ export async function listDay(dateYmd) {
   });
 }
 
+// A readable list of TODAY's timed calendar events (for injecting into Kara's
+// prompt so she always plans from the real calendar, never in a silo).
+export async function todaySchedule() {
+  if (!calendarEnabled) return "";
+  const ymd = new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+  const evs = await listDay(ymd);
+  const timed = evs.filter((e) => e.timed).sort((a, b) => a.startMin - b.startMin);
+  if (!timed.length) return "";
+  const fmt = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  return timed.map((e) => `${fmt(e.startMin)}–${fmt(e.endMin)} ${e.summary}`).join("\n");
+}
+
 export async function listEvents({ time_min, time_max, query } = {}) {
   if (!calendarEnabled) return NOT_READY;
   const now = new Date();
