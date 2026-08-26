@@ -121,13 +121,26 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   const due = await tasksDueOn(ymd);
   for (const t of due) {
     if (blockedTaskIds.has(t.id)) continue; // already has a timed block
-    const item = { title: `📋 ${t.task}`, dur: DUR[t.priority] || 45, task_id: t.id, prio: t.priority };
+    const item = {
+      title: `📋 ${t.task}`,
+      dur: DUR[t.priority] || 45,
+      task_id: t.id,
+      prio: t.priority,
+      deadline: t.deadline ? t.deadline.slice(0, 10) : null,
+    };
     if (weekend) unplaced.push(item); // no task-work on weekends → rolls to a weekday
     else toPlace.push(item);
   }
-  // requirements first, then tasks by priority (High → Low)
+  // requirements first; then tasks with the SOONEST deadline first (so hard
+  // deadlines get scheduled before they're due), then by priority.
   const order = { High: 0, Medium: 1, Low: 2 };
-  toPlace.sort((a, b) => (a.task_id ? 1 : 0) - (b.task_id ? 1 : 0) || (order[a.prio] ?? 1) - (order[b.prio] ?? 1));
+  toPlace.sort((a, b) => {
+    const ar = a.task_id ? 1 : 0, br = b.task_id ? 1 : 0;
+    if (ar !== br) return ar - br;
+    const ad = a.deadline || "9999-99-99", bd = b.deadline || "9999-99-99";
+    if (ad !== bd) return ad < bd ? -1 : 1;
+    return (order[a.prio] ?? 1) - (order[b.prio] ?? 1);
+  });
 
   let taskCount = 0;
   for (const item of toPlace) {
@@ -146,13 +159,20 @@ export async function planDay(ymd, { dryRun = false } = {}) {
     }
     placed.push(`${minToHHMM(startMin)}–${minToHHMM(endMin)} ${item.title}`);
   }
-  // AUTO-ROLL: any task that didn't fit rolls to the next WEEKDAY (Motion-style)
-  // — its due date moves forward so it's re-scheduled instead of sitting stuck.
+  // AUTO-ROLL: any task that didn't fit rolls to the next WEEKDAY (Motion-style) —
+  // UNLESS rolling would push it past its hard deadline, in which case we keep it
+  // on this day (so it stays on/before the deadline) and flag it as at-risk.
   const nxt = nextWeekdayYmd(ymd);
+  const atRisk = [];
   for (const item of unplaced) {
-    if (item.task_id && !dryRun) await updateTask({ task_id: item.task_id, due: nxt }).catch(() => {});
+    if (!item.task_id) continue;
+    if (item.deadline && nxt > item.deadline) {
+      atRisk.push(item.title); // can't fit before its deadline — Kara should flag this
+    } else if (!dryRun) {
+      await updateTask({ task_id: item.task_id, due: nxt }).catch(() => {});
+    }
   }
-  return { ymd, placed, unplaced: unplaced.map((i) => i.title), removed };
+  return { ymd, placed, unplaced: unplaced.map((i) => i.title), removed, atRisk };
 }
 
 // Pull every overdue (past-due, not-done) task onto today so it re-enters the
