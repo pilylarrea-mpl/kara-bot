@@ -12,7 +12,7 @@ import { listDay, createEvent, deleteEvent, calendarEnabled } from "./calendar.j
 
 const DAY_START = 8 * 60 + 30; // 8:30am
 const DAY_END = 21 * 60; // 9:00pm
-const DUR = { High: 60, Medium: 45, Low: 30 };
+const DUR = { High: 45, Medium: 30, Low: 20 }; // fallback block length when Est isn't set
 const MAX_TASKS_PER_DAY = 7; // don't cram a day — overflow rolls forward
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -118,7 +118,7 @@ export async function planDay(ymd, { dryRun = false } = {}) {
     if (blockedTaskIds.has(t.id)) continue; // already has a timed block
     const item = {
       title: `📋 ${t.task}`,
-      dur: DUR[t.priority] || 45,
+      dur: t.est && t.est > 0 ? t.est : DUR[t.priority] || 30,
       task_id: t.id,
       prio: t.priority,
       deadline: t.deadline ? t.deadline.slice(0, 10) : null,

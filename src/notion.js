@@ -141,6 +141,7 @@ function taskSummary(page) {
     due: dateVal(page, "Due"),
     deadline: dateVal(page, "Deadline"),
     area: selName(page, "Area"),
+    est: page.properties["Est (min)"]?.number ?? null,
     goalIds: relationIds(page, "Goal"),
     notes: plainText(page, "Notes"),
   };
@@ -187,6 +188,7 @@ export async function createTask(input) {
     Due: date(input.due),
     Deadline: date(input.deadline),
     Area: sel(input.area),
+    "Est (min)": num(input.est_min),
     Goal: relation(input.goal_id),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
@@ -206,6 +208,7 @@ export async function updateTask(input) {
     Due: date(input.due),
     Deadline: date(input.deadline),
     Area: sel(input.area),
+    "Est (min)": num(input.est_min),
     Goal: relation(input.goal_id),
     Notes: input.notes ? { rich_text: rich(input.notes) } : undefined,
   });
@@ -489,6 +492,7 @@ export const notionTools = [
         task: { type: "string" },
         due: { type: "string", description: "Plain local date YYYY-MM-DD — the day she's SCHEDULED to do it (the auto-scheduler places/rolls this). Not the deadline." },
         deadline: { type: "string", description: "Optional HARD deadline YYYY-MM-DD — the must-be-done-by date (return window, RSVP, bill due). Set this ONLY when there's a real consequence to missing it; the scheduler will never roll the task past it. Most tasks have no deadline." },
+        est_min: { type: "number", description: "REALISTIC minutes this actually takes — the scheduler sizes the calendar block by this. Be honest: a quick call/text/pay ~15, an errand/admin ~30, a real work session 60–120. Don't default everything to an hour." },
         priority: { type: "string", enum: ["High", "Medium", "Low"], description: "By goal-alignment (High serves a sprint/goal priority; Low is admin/personal)." },
         status: { type: "string", enum: ["Not started", "In progress", "Done"] },
         area: { type: "string", enum: ["Founder", "Money", "Health", "Personal", "Relationships", "Learning"] },
@@ -509,6 +513,7 @@ export const notionTools = [
         priority: { type: "string", enum: ["High", "Medium", "Low"] },
         due: { type: "string", description: "New scheduled day YYYY-MM-DD." },
         deadline: { type: "string", description: "Hard deadline YYYY-MM-DD (the must-be-done-by date; scheduler never rolls past it). Only for tasks with a real deadline." },
+        est_min: { type: "number", description: "Realistic minutes the task takes (block length): quick call/text ~15, errand/admin ~30, real work 60–120." },
         area: { type: "string", enum: ["Founder", "Money", "Health", "Personal", "Relationships", "Learning"] },
         goal_id: { type: "string", description: "Notion goal id to link (from list_goals)." },
         notes: { type: "string" },
