@@ -124,7 +124,9 @@ export async function planDay(ymd, { dryRun = false } = {}) {
         continue;
       }
     } else if (isReqBlock(e)) {
-      if (overlapsFixed(e)) {
+      // Drop workout/founder if it overlaps a real appointment, or on a travel day
+      // (no workout/deep-work squeezed around a flight).
+      if (travelDay || overlapsFixed(e)) {
         if (!dryRun) await deleteEvent({ event_id: e.id }).catch(() => {});
         removed.push(e.summary);
         continue;
