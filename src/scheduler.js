@@ -64,7 +64,10 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   }
   // Classify what's on the day. FIXED = real meetings/appointments we must never
   // overlap (anything timed that ISN'T one of our own blocks or a reminder).
-  const isTaskBlock = (e) => e.timed && e.summary.startsWith("📋") && e.taskId;
+  // A 📋 block is ALWAYS one of ours — even if it's a legacy orphan missing the
+  // hidden taskId tag (from an older code version or Kara's calendar tool). We
+  // must recognize those so we can sweep them, not mistake them for appointments.
+  const isTaskBlock = (e) => e.timed && e.summary.startsWith("📋");
   const isReqBlock = (e) => e.timed && /🏋️|🚀|workout|founder/i.test(e.summary);
   const isReminder = (e) => e.timed && e.summary.startsWith("⏰");
   const fixed = events
@@ -82,7 +85,12 @@ export async function planDay(ymd, { dryRun = false } = {}) {
   for (const e of events) {
     if (isTaskBlock(e)) {
       let drop = overlapsFixed(e); // moved-off an appointment
-      if (!drop) {
+      if (!drop && !e.taskId) {
+        // Legacy orphan with no taskId tag — always sweep it. If the underlying
+        // task is still open + due today, it gets re-placed below with a proper
+        // tag; if it's Done/gone, it just disappears. Either way the ghost dies.
+        drop = true;
+      } else if (!drop) {
         const t = await getTaskById(e.taskId);
         drop = !t || t.status === "Done" || (t.due && t.due.slice(0, 10) !== ymd); // done/deleted/moved by Pilar
       }
