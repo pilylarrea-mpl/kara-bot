@@ -11,7 +11,7 @@ import { listDay, createEvent, deleteEvent, calendarEnabled } from "./calendar.j
 // manual changes. Rescheduling/among tasks moves their blocks elsewhere.
 
 const DAY_START = 8 * 60 + 30; // 8:30am
-const DAY_END = 21 * 60; // 9:00pm
+const DAY_END = 22 * 60; // 10:00pm working-hours cutoff
 const DUR = { High: 45, Medium: 30, Low: 20 }; // fallback block length when Est isn't set
 const MAX_TASKS_PER_DAY = 7; // don't cram a day — overflow rolls forward
 

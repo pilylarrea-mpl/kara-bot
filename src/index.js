@@ -116,17 +116,21 @@ scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
 // hand) flow onto the calendar within the hour. Today starts from the current
 // time so running mid-day never books the past.
 cron.schedule(
-  "0 6-22 * * *",
-  () =>
-    enqueue(async () => {
-      try {
-        const out = await planAhead(7);
-        const placed = out.reduce((n, d) => n + (d.placed?.length || 0), 0);
-        console.log(`auto-schedule: placed ${placed} blocks across 7 days`);
-      } catch (e) {
-        console.error("auto-schedule failed:", e);
-      }
-    }),
+  "*/5 6-22 * * *",
+  async () => {
+    // Runs OUTSIDE the agent queue so it never delays a chat reply; it only
+    // touches the calendar + reads Notion, so racing a task edit is harmless
+    // (the next run reconciles). Every 5 min = near-instant calendar sync after
+    // a change made in Pily/Kara/Notion.
+    try {
+      const out = await planAhead(7);
+      const placed = out.reduce((n, d) => n + (d.placed?.length || 0), 0);
+      const removed = out.reduce((n, d) => n + (d.removed?.length || 0), 0);
+      if (placed || removed) console.log(`auto-schedule: +${placed} / -${removed} blocks`);
+    } catch (e) {
+      console.error("auto-schedule failed:", e);
+    }
+  },
   { timezone: config.tz }
 );
 
