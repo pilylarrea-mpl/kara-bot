@@ -160,6 +160,22 @@ function etMinutes(dateObj) {
   return +p.find((x) => x.type === "hour").value % 24 * 60 + +p.find((x) => x.type === "minute").value;
 }
 
+// Normalize a time input to an RFC3339 timestamp WITH offset, which events.list's
+// timeMin/timeMax require. Kara (and the rest of this bot) speak naive local
+// wall-clock ("2026-08-24T00:00:00", or just "2026-08-24") — those must get the
+// ET offset attached or Google rejects the request with 400. Strings that already
+// carry a Z or ±HH:MM offset pass through untouched.
+function toRfc3339(v) {
+  if (!v) return null;
+  let s = String(v).trim();
+  if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) return s; // already absolute
+  const dm = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!dm) return s; // unrecognized shape — let the API decide
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) s += "T00:00:00"; // date-only → midnight
+  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) s += ":00"; // add seconds
+  return s + etOffset(dm[1]);
+}
+
 // All events on a given ET calendar day, normalized for the scheduler.
 export async function listDay(dateYmd) {
   if (!calendarEnabled) return [];
@@ -203,8 +219,9 @@ export async function listEvents({ time_min, time_max, query } = {}) {
   const now = new Date();
   const res = await calendar.events.list({
     calendarId,
-    timeMin: time_min || now.toISOString(),
-    timeMax: time_max || new Date(now.getTime() + 7 * 24 * 3600 * 1000).toISOString(),
+    // Normalize naive local strings → RFC3339-with-offset (Google 400s otherwise).
+    timeMin: toRfc3339(time_min) || now.toISOString(),
+    timeMax: toRfc3339(time_max) || new Date(now.getTime() + 7 * 24 * 3600 * 1000).toISOString(),
     q: query || undefined,
     singleEvents: true,
     orderBy: "startTime",
