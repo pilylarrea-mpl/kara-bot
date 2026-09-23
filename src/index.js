@@ -118,6 +118,11 @@ scheduleSlot("0 18 * * 0", "weekly"); // Sunday 6pm ET — plan the week
 cron.schedule(
   "*/5 6-22 * * *",
   async () => {
+    // Manual pause switch — set Railway var SCHEDULER_PAUSED=1 to stop the
+    // auto-scheduler from touching the calendar (e.g. while Pilar is managing it
+    // by hand). Set it back to 0 (or remove it) to resume. Reminders and other
+    // loops keep running; only calendar auto-building is paused.
+    if (process.env.SCHEDULER_PAUSED === "1") return;
     // Runs OUTSIDE the agent queue so it never delays a chat reply; it only
     // touches the calendar + reads Notion, so racing a task edit is harmless
     // (the next run reconciles). Every 5 min = near-instant calendar sync after
